@@ -22,6 +22,9 @@ test('entry-point construction registers the protected relay routes',async t=>{
   const health=await app.inject({method:'GET',url:'/health'});
   assert.equal(health.statusCode,200);assert.equal(health.json().status,'ok');
   assert.equal(health.headers['cache-control'],'no-store');
+  const root=await app.inject({method:'GET',url:'/'});
+  assert.equal(root.statusCode,302);assert.equal(root.headers.location,'/health');
+  assert.equal(root.headers['cache-control'],'no-store');
   for(const url of ['/v1/authentication-requests/pending','/v1/remote/offer']) {
     const result=await app.inject({method:'GET',url});assert.equal(result.statusCode,401);
   }

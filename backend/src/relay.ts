@@ -41,6 +41,7 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
     requireThat(r.expiresAt > now(),'expired',410); return r;
   };
   const pairing = async (id: string, s=store) => { requireThat(uuid(id)); const p=await s.get('device_pairings',id); requireThat(p?.active,'not_paired',403); return p; };
+  app.get('/',async (_req,reply)=>reply.redirect('/health'));
   app.get('/health', async()=>({status:'ok',mode:'desktop-approval-only'}));
   app.post('/v1/pairing-sessions', async req => store.transaction(async s=> {
     const w=await device(req,'windows',s); const b=req.body as any; const p=await verified(b.invitationJws,w.jwk,'pair-invitation');

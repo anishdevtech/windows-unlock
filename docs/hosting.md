@@ -56,8 +56,8 @@ certificate is not trusted, all requests fail while the function starts.
    certificate verification or set `NODE_TLS_REJECT_UNAUTHORIZED=0`.
 4. Before device use, run `npm run migrate` from `backend` with both variables set
    in the operator terminal. The CLI uses the same verified TLS configuration.
-   Confirm `https://YOUR-HOST/health` returns JSON with `"status":"ok"`. The bare `/` path is
-   not a website or dashboard.
+   Confirm `https://YOUR-HOST/health` returns JSON with `"status":"ok"`. The bare `/` path
+   redirects to this health check; there is no browser dashboard.
 
 Editing `.env.example` does not configure Vercel or the local server. That tracked
 file must contain placeholders only. Real credentials belong in the hosting

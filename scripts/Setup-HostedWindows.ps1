@@ -55,14 +55,19 @@ if(Test-Path -LiteralPath $taskMarker) {
     $taskPreviousEnv=@{}
     foreach($taskEnvName in @('DATABASE_URL','DATABASE_CA_PEM','PHONEUNLOCK_CONFIG')) {
       $taskPreviousEnv[$taskEnvName]=[Environment]::GetEnvironmentVariable($taskEnvName,'Process')
-      [Environment]::SetEnvironmentVariable($taskEnvName,$null,'Process')
+      # PowerShell can retain an empty process variable when .NET is given null.
+      # Node --env-file does not override existing variables, including empty ones.
+      Remove-Item -LiteralPath "Env:\$taskEnvName" -ErrorAction SilentlyContinue
     }
     try {
       & node --env-file=$taskEnv --import tsx src/cli.ts bootstrap $taskPublic $taskBootstrap
       if($LASTEXITCODE){throw 'Hosted device registration failed. Check the operator database configuration; do not delete protected state.'}
     }finally{
       Pop-Location
-      foreach($taskEnvName in $taskPreviousEnv.Keys){[Environment]::SetEnvironmentVariable($taskEnvName,$taskPreviousEnv[$taskEnvName],'Process')}
+      foreach($taskEnvName in $taskPreviousEnv.Keys){
+        if($null -eq $taskPreviousEnv[$taskEnvName]){Remove-Item -LiteralPath "Env:\$taskEnvName" -ErrorAction SilentlyContinue}
+        else{[Environment]::SetEnvironmentVariable($taskEnvName,$taskPreviousEnv[$taskEnvName],'Process')}
+      }
     }
   }
   Invoke-TaskCompanion -ClientArguments @('--configure',$taskBootstrap)

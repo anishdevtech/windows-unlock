@@ -6,6 +6,11 @@ This procedure configures the desktop companion; it does not install a Credentia
 Provider or turn phone approval into actual Windows lock-screen sign-in. Normal
 Windows PIN/password remain available.
 
+On this development laptop, Application Control currently blocks the rebuilt unsigned
+companion. A trusted publisher signature is required before its launch/setup can be
+tested. See [current Windows sign-in and signing status](windows-sign-in-status.md).
+The existing hosted pairing was preserved; do not reset it to address this block.
+
 On the development laptop, with the Windows build and private operator `backend/.env`
 already present, open PowerShell in the project folder and run:
 
@@ -49,6 +54,14 @@ Complete pairing once:
 Power controls and live camera are separate opt-ins on Windows. Leave them off until
 you want to test them. Live camera requires a visible companion window and unlocked
 Windows, and expires after 60 seconds. Do not enable camera just to complete pairing.
+
+For a background phone prompt when you lock Windows, enable **Send a phone approval
+prompt when Windows locks (test only)** in the rebuilt companion. Keep the companion
+running in the tray and Android popup approvals enabled. This sends one time-limited
+test per lock, with a 60-second cooldown. It does not unlock Windows; continue using
+the built-in PIN. It does not run at the first sign-in after a restart. See
+[Windows sign-in status](windows-sign-in-status.md) for the exact boundary and the
+remaining Credential Provider/authentication requirements.
 
 After setup, use the desktop shortcut or let the Startup shortcut launch the companion.
 Do not run local backend scripts for hosted use. Exit from the tray to stop the

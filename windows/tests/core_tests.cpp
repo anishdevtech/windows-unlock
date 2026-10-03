@@ -1,5 +1,6 @@
 #include "core.hpp"
 #include "remote.hpp"
+#include "lock_prompt.hpp"
 #include <iostream>
 #include <functional>
 #include <thread>
@@ -8,6 +9,17 @@ using namespace pu;
 void expect(bool ok,const char* label){if(!ok)throw std::runtime_error(label);}
 void rejects(const std::function<void()>& fn){bool rejected=false;try{fn();}catch(...){rejected=true;}expect(rejected,"Expected rejection");}
 int main(int argc,char**argv){try{
+  const auto now=std::chrono::steady_clock::now();LockPromptGate gate;
+  expect(!gate.onLock(false,true,false,true,now),"Lock prompt requires opt-in");gate.unlock();
+  expect(!gate.onLock(true,false,false,true,now),"Lock prompt requires pairing");gate.unlock();
+  expect(!gate.onLock(true,true,true,true,now),"Lock prompt never queues while busy");
+  expect(!gate.onLock(true,true,false,true,now),"Busy lock cycle is not retried");gate.unlock();
+  expect(!gate.onLock(true,true,false,false,now),"No remote-session lock prompts");gate.unlock();
+  expect(gate.onLock(true,true,false,true,now),"Local lock triggers once");
+  expect(!gate.onLock(true,true,false,true,now+std::chrono::seconds(61)),"Duplicate lock event suppressed");gate.unlock();
+  expect(!gate.onLock(true,true,false,true,now+std::chrono::seconds(1)),"Rapid relock cooldown");gate.unlock();
+  expect(gate.onLock(true,true,false,true,now+std::chrono::seconds(60)),"New lock after cooldown");gate.unlock();
+  gate.observeLocked();expect(!gate.onLock(true,true,false,true,now+std::chrono::seconds(120)),"Startup locked state never triggers");
   expect(hash("abc")=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","SHA256 vector");
   for(size_t n=1;n<128;n++){auto b=random(n);expect(unb64url(b64url(b))==b,"Base64 roundtrip");}
   rejects([]{parse("{\"a\":1,\"a\":2}");});rejects([]{unb64url("AA==");});

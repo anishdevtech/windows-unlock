@@ -13,7 +13,7 @@ target_link_libraries(phoneunlock_core PUBLIC nlohmann_json::nlohmann_json bcryp
 target_compile_definitions(phoneunlock_core PUBLIC UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(phoneunlock_core PRIVATE /W4 /permissive- /utf-8 /guard:cf)
 add_executable(phoneunlock WIN32 desktop-test-client/main.cpp)
-target_link_libraries(phoneunlock PRIVATE phoneunlock_core comctl32 shell32)
+target_link_libraries(phoneunlock PRIVATE phoneunlock_core comctl32 shell32 wtsapi32)
 target_link_options(phoneunlock PRIVATE /DYNAMICBASE /NXCOMPAT /guard:cf)
 add_executable(core_tests tests/core_tests.cpp)
 target_link_libraries(core_tests PRIVATE phoneunlock_core)

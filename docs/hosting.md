@@ -28,6 +28,14 @@ preview. It still does not sign in to Windows. No PIN/password settings are chan
    with the Windows client `--configure` command and then delete it securely from the
    transfer locations. There is deliberately no public self-service registration route.
 
+If Vercel reports **No entrypoint found which imports fastify**, update to the fixed
+`src/server.ts` which directly imports and constructs Fastify. The builder checks the
+entry-point file's text, so a Fastify import only in `relay.ts` is insufficient. Keep
+Root Directory **backend**, Framework **Fastify**, Build Command **npm run build**,
+and Output Directory unset. Commit/push the fix and deploy the new commit; redeploying
+the old failed commit does not pick up local changes. Verified against Vercel's
+[Fastify builder source](https://github.com/vercel/vercel/blob/main/packages/fastify/src/build.ts).
+
 There are no long-running server tasks or local state required on the host. State and
 rate-limit buckets are PostgreSQL-backed. FCM delivery occurs after challenge commit;
 failure cannot approve, roll back or extend a request. HTTP polling also works on

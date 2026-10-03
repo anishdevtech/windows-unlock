@@ -1,4 +1,4 @@
-import Fastify, { type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyRequest, type FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { ApiError, hash, uuid, now, verified, decode, publicKey, lifetime, fields, strictJson, requireThat } from './protocol.js';
 import type { Store, Row } from './store.js';
@@ -6,7 +6,14 @@ import type { PushSender } from './push.js';
 import { remoteRoutes } from './remote.js';
 
 export function createApp(store: Store, https?: { key: Buffer; cert: Buffer }, push?:PushSender) {
-  const app = Fastify({ ...(https ? { https: {...https,minVersion:'TLSv1.2' as const} } : {}), logger: false, bodyLimit: 65536, requestTimeout: 10000 });
+  return configureApp(Fastify(serverOptions(https)),store,push);
+}
+
+export function serverOptions(https?: { key: Buffer; cert: Buffer }) {
+  return { ...(https ? { https: {...https,minVersion:'TLSv1.2' as const} } : {}), logger: false as const, bodyLimit: 65536, requestTimeout: 10000 };
+}
+
+export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
   app.removeContentTypeParser('application/json');
   app.addContentTypeParser('application/json', {parseAs:'string'}, (_req, body, done) => {
     try { done(null, strictJson(body as string)); } catch(e) { done(e as Error); }

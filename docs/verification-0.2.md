@@ -44,3 +44,13 @@ PIN/password/providers are untouched.
 After verification the local test relay and PostgreSQL cluster were stopped. Run
 scripts/Start-Local.ps1 to restart them and launch the updated companion. No active
 camera or remote power request was created during this implementation.
+
+## Vercel entry-point correction — 2026-10-04
+
+The first cloud build reported that src/server.ts did not import Fastify directly.
+Vercel's Fastify detector examines that file, not its transitive imports. server.ts
+now directly constructs Fastify with shared serverOptions and then registers the
+same protected routes through configureApp. TypeScript build and 17 backend tests
+passed, including the entry-point detection contract and route-registration checks.
+Native/Android code was unchanged; those builds were not repeated. Cloud redeployment
+of this correction has not been performed by the agent.

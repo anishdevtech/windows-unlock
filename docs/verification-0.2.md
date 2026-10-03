@@ -93,3 +93,29 @@ protected relay routes despite invalid push configuration, and valid initializat
 with a generated test-only RSA key. No private service account or live FCM call was
 used. Actual hosted deployment and delivery still require operator configuration,
 redeployment and physical-phone checks. Native/Android files were unchanged.
+
+## Local run with operator-provided hosted credentials — 2026-10-04
+
+The operator supplied an ignored backend/.env for local testing. Node's environment
+parser loaded only four characters of the service-account value because its JSON was
+wrapped with conflicting double quotes. The original file was preserved in an
+access-restricted ignored runtime backup; the credential object was normalized to a
+single-quoted JSON environment value and verified to round-trip without changing
+its contents. Credential contents were not printed or committed.
+
+The real Aiven PostgreSQL connection succeeded with encrypted transport and a verified
+certificate. Firebase Admin initialized and exchanged the supplied service-account
+credential for an access token successfully. This authenticates the account; it does
+not confirm FCM permissions or notification delivery to the physical phone.
+
+The hosted app schema was absent. Both repository migrations were applied, creating
+the app tables and indexes without deleting existing data. The relay was started
+locally on loopback with HTTPS at https://localhost:9443. Verified TLS HTTP requests
+returned 200 and status ok on /health, and 401 on both protected pending-approval and
+remote-offer routes without credentials. These requests exercised the real hosted
+database rate-limit path. The local process was left running for the operator.
+
+Start-Hosted-Local.ps1 supplies a repeatable local run using explicit .env loading and
+the provisioned development certificates. This local-host test still needs internet
+to reach the hosted database and Firebase. No Windows account, PIN, companion pairing,
+camera or power setting was changed. Vercel execution remains a separate check.

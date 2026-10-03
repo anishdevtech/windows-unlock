@@ -88,6 +88,41 @@ access private. Run the built CLI migrations before traffic, renew TLS certifica
 restart/reload the relay as appropriate. Never set `VERCEL=1` on a public standalone VM.
 The Docker recipe is supplied; a container/cloud deployment has not been exercised here.
 
+## Run locally with the same hosted credentials
+
+Put your real hosting variables in the ignored `backend/.env`, never `.env.example`.
+For a downloaded Firebase service account, use **single quotes** around the complete
+JSON object in this file. Double quotes around an object containing unescaped JSON
+double quotes cause Node's environment parser to truncate the value. For example:
+
+```dotenv
+# Shape only: replace with the complete, real downloaded object in your private .env.
+FIREBASE_SERVICE_ACCOUNT_JSON='{"type":"service_account","project_id":"your-project","client_email":"your-account@example.com","private_key":"..."}'
+```
+
+Vercel's environment-variable field expects the JSON object itself, without the
+outer single quotes used in `.env`. Keep the JSON's escaped `\n` inside private_key.
+
+After the local development TLS files have been provisioned, run from the repo root:
+
+```powershell
+.\scripts\Start-Hosted-Local.ps1
+```
+
+This builds and runs the relay at `https://localhost:9443` using Node's explicit
+`--env-file` loading. The server does not automatically read `.env` on plain `npm start`.
+It binds to loopback and does not change the existing Windows companion configuration.
+Close the terminal process with Ctrl+C before restarting it. The hosted database and
+Firebase still require internet; for fully offline development use `Start-Local.ps1`
+with the local PostgreSQL configuration and foreground approval.
+
+Create the hosted schema once before using the device API:
+
+```powershell
+Set-Location backend
+node --env-file=.env --import tsx src/cli.ts migrate
+```
+
 ## Point Windows and Android at your hosted URL
 
 Close the Windows companion (right-click tray -> Exit). Unpair on the old relay before

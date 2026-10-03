@@ -7,7 +7,8 @@ preview. It still does not sign in to Windows. No PIN/password settings are chan
 ## Deploy to Vercel
 
 1. Create a managed PostgreSQL database. Use a production database separate from the
-   local `_test` database. Use a pooled connection URL and TLS with certificate validation.
+   local `_test` database. Prefer a pooled connection URL when your plan supports it,
+   and always use TLS with certificate validation.
    If the provider has a private CA, supply its PEM as `DATABASE_CA_PEM`.
 2. Import the repository into Vercel and choose **backend** as the Root Directory.
    Node 24, Fastify framework and `backend/vercel.json` are provided. `src/server.ts`
@@ -35,6 +36,36 @@ Root Directory **backend**, Framework **Fastify**, Build Command **npm run build
 and Output Directory unset. Commit/push the fix and deploy the new commit; redeploying
 the old failed commit does not pick up local changes. Verified against Vercel's
 [Fastify builder source](https://github.com/vercel/vercel/blob/main/packages/fastify/src/build.ts).
+
+### Aiven: build succeeds but requests return 500 with a certificate-chain error
+
+Aiven PostgreSQL uses a project CA. A successful Vercel build does not test the
+database connection; startup connects before registering the API routes. If that
+certificate is not trusted, all requests fail while the function starts.
+
+1. In the **Aiven Console**, open your PostgreSQL service's **Overview** and download
+   its **CA certificate** (`ca.pem`). Get the certificate from your own service,
+   rather than copying a certificate from an unauthenticated connection.
+2. In **Vercel > project > Settings > Environment Variables**, set `DATABASE_URL`
+   to the service's full connection URI. Set `DATABASE_CA_PEM` to the **contents** of
+   `ca.pem`, including `-----BEGIN CERTIFICATE-----` and `-----END CERTIFICATE-----`.
+   The value is not the filename, database URL, or a private key. Paste normal
+   multiline text; quoted PEM with escaped `\n` is also accepted by this version.
+3. Apply these values to **Production**, save, and **redeploy**. Existing deployments
+   do not pick up changed environment variables automatically. Do not switch off
+   certificate verification or set `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+4. Before device use, run `npm run migrate` from `backend` with both variables set
+   in the operator terminal. The CLI uses the same verified TLS configuration.
+   Confirm `https://YOUR-HOST/health` returns JSON with `"status":"ok"`. The bare `/` path is
+   not a website or dashboard.
+
+Editing `.env.example` does not configure Vercel or the local server. That tracked
+file must contain placeholders only. Real credentials belong in the hosting
+environment or an access-restricted, ignored operator config. If a database password
+was committed or shared, rotate it in Aiven and update the protected configuration.
+
+See [Aiven's Node.js connection guide](https://aiven.io/docs/products/postgresql/howto/connect-node)
+and [Aiven's certificate requirements](https://aiven.io/docs/platform/concepts/tls-ssl-certificates).
 
 There are no long-running server tasks or local state required on the host. State and
 rate-limit buckets are PostgreSQL-backed. FCM delivery occurs after challenge commit;
@@ -87,6 +118,8 @@ Do not keep using the old LAN invitation or copy the full local database to the 
 3. Enable Firebase Cloud Messaging HTTP v1 and create a narrowly scoped server service
    account for message delivery. Prefer managed workload credentials where supported;
    otherwise place its private JSON only in the host's protected environment variable.
+   On Vercel, set `FIREBASE_PROJECT_ID` to that account's `project_id` and
+   `FIREBASE_SERVICE_ACCOUNT_JSON` to the complete downloaded JSON object.
 4. On the phone select **Enable popup approvals**, allow notification permission, and
    leave the approval notification channel at High importance. Keep Google Play services
    available. Token refresh is registered with signed identity-key proof via WorkManager.
@@ -99,6 +132,34 @@ network availability). Force-stopping the app prevents FCM delivery until it is 
 OPPO battery restrictions may delay delivery; test default settings first, then use the
 phone's app battery settings if needed. No overlay or full-screen-intent permission is used.
 Android reserves automatic full-screen interruptions mainly for calls and alarms.
+
+### Firebase startup error: missing string project_id
+
+`Service account object must contain a string "project_id" property` means the server
+received a JSON value that is not a complete Firebase Admin service-account credential.
+Do not fix this by inserting a project ID into Android's `google-services.json`:
+that Android client file does not include the server's signing credential.
+
+In **Firebase Console > Project settings > Service accounts**, choose **Generate new
+private key**, then securely store the downloaded JSON. In Vercel's **Production**
+environment variables, replace `FIREBASE_SERVICE_ACCOUNT_JSON` with that complete
+JSON object (not a filename, Android config, or quoted JSON string). Its fields include
+`type: "service_account"`, `project_id`, `client_email` and `private_key`. Set
+`FIREBASE_PROJECT_ID` to exactly the same `project_id`. Save and redeploy. Keep this
+private server key out of Git, chat and the Android APK. Use a service account with
+only the permissions needed for FCM delivery.
+
+This version disables push with a sanitized warning when these credentials are
+missing or invalid; the protected relay and foreground polling continue working.
+Authentication requests report `pushDelivery: "not_configured"` when push is disabled.
+FCM send failures report `"failed"` and never approve or extend a challenge. A health
+response alone does not confirm working popups: test actual delivery to your phone
+after the Firebase project is configured and the Android app has its client config.
+
+If Firebase is not ready, temporarily remove both Firebase environment variables and
+redeploy to run the relay without popups. Keep `DATABASE_URL` and `DATABASE_CA_PEM`.
+See [Firebase Admin setup](https://firebase.google.com/docs/admin/setup) and the
+[Android client configuration guide](https://firebase.google.com/docs/android/google-services-plugin-and-file).
 
 ## Phone controls and live camera
 

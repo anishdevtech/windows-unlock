@@ -54,3 +54,42 @@ same protected routes through configureApp. TypeScript build and 17 backend test
 passed, including the entry-point detection contract and route-registration checks.
 Native/Android code was unchanged; those builds were not repeated. Cloud redeployment
 of this correction has not been performed by the agent.
+
+## Hosted PostgreSQL certificate correction — 2026-10-04
+
+The operator's subsequent Vercel build/deployment succeeded, but runtime startup
+reported a self-signed certificate chain. The local operator configuration identifies
+Aiven PostgreSQL; Aiven's official Node.js guide requires its project CA with
+certificate verification enabled. The host's actual environment and database connection
+have not been inspected or tested by the agent.
+
+CA configuration now validates PEM certificate bundles and accepts multiline or
+quoted/escaped-newline dashboard values. Empty environment values can fall back to
+the protected operator config. Remote connections retain certificate/hostname
+verification and remove URL parameters that could override the explicit TLS settings.
+Startup errors explain missing trust without logging provider messages or credentials.
+The hosting guide includes the Aiven CA download and Vercel redeployment steps.
+
+TypeScript build and all 23 backend tests passed, including six new database
+configuration/error regression checks. These are local tests, not confirmation of
+a successful hosted connection. Native and Android code were unchanged and were
+not rebuilt. The operator must supply the correct CA in Vercel, redeploy and verify
+/health; migrations and device/Firebase setup remain required before real-device use.
+
+## Firebase credential startup correction — 2026-10-04
+
+The next operator-provided Vercel log reaches Firebase initialization and exits because
+the supplied service-account object lacks a string project_id. Push initialization
+now validates the downloaded Admin credential shape, checks that its project_id
+matches FIREBASE_PROJECT_ID, and isolates invalid/absent credentials from relay startup.
+Warnings contain fixed setup guidance without SDK exceptions or credential contents.
+Vercel with no service-account credential keeps push disabled; other hosts retain
+support for Google application-default credentials. Project-specific named Firebase
+apps avoid reusing an unrelated application's credentials.
+
+TypeScript build and all 26 local backend tests passed. New checks exercise malformed
+JSON, Android client JSON, missing fields, bad keys, mismatched projects, healthy and
+protected relay routes despite invalid push configuration, and valid initialization
+with a generated test-only RSA key. No private service account or live FCM call was
+used. Actual hosted deployment and delivery still require operator configuration,
+redeployment and physical-phone checks. Native/Android files were unchanged.

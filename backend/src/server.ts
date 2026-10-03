@@ -2,14 +2,15 @@ import { readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import { configureApp,serverOptions } from './relay.js';
 import { PgStore } from './store.js';
-import { configuration,database } from './config.js';
+import { configuration,database,databaseFailure } from './config.js';
 import { firebasePush } from './push.js';
 
 const c=configuration();
 const managed=process.env.VERCEL==='1';
 if (!managed&&(!c.tlsKey || !c.tlsCert)) throw new Error('TLS configuration is required outside Vercel');
 const pool=database(c);
-await pool.query('SELECT 1');
+try {await pool.query('SELECT 1');}
+catch(error) {await pool.end();throw databaseFailure(error);}
 // Vercel's Fastify detector requires the entry point itself to import Fastify.
 const app=Fastify(serverOptions(managed?undefined:{key:readFileSync(c.tlsKey),cert:readFileSync(c.tlsCert)}));
 configureApp(app,new PgStore(pool),firebasePush());

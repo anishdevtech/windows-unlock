@@ -33,6 +33,15 @@ requires a separately validated authentication path. Until that exists, real log
 is disabled. Never disable LSA protection to load an unsigned package. Personal
 Microsoft-account support and protected-LSA signing are unresolved release gates.
 
+The native development implementation is `CredentialProviderPreview.dll` ->
+SYSTEM-only message pipe -> `PhoneUnlockPreviewService.exe` -> existing CNG/WinHTTP
+core. The service creates/verifies desktop-purpose challenges for a frozen enrolled
+SID in an already signed-in, locked local console session. The provider reports
+approval status and **always returns no credential**. It never selects itself as the
+default, requests automatic sign-in, or filters other providers. Setup staging is a
+separate elevated CLI, outside LogonUI. See [native development](native-development.md)
+for identity checks, enrollment protections and release boundaries.
+
 ## Internet operation
 
 Both apps connect outbound to a configured HTTPS hostname. DNS resolves the server

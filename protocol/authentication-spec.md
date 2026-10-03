@@ -12,6 +12,13 @@ are integer seconds UTC. 30-second skew is allowed, but never extends Windows's 
 60-second steady-clock deadline. No canonical JSON requirement: verify exact received
 JWS bytes; digest references are lowercase SHA256 hexadecimal over the entire JWS.
 
+The native Credential Provider/service preview also uses `purpose=desktop-approval`.
+Its local pipe carries only status; `ApprovedPreview` is never an accepted Windows
+credential. Account SID/session/scenario binding is additionally enforced locally,
+and credential serialization stays empty. Actual Windows sign-in requires a separate
+audited protocol purpose/authentication authority that rejects these desktop proofs.
+See [native IPC and enrollment](../docs/native-development.md).
+
 ## Pairing
 
 Windows signs pair-invitation: sessionId, windowsDeviceId, windowsName, nonce (32 bytes

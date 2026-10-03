@@ -22,3 +22,9 @@ only project components. Test on disposable Windows VMs first. Require recovery 
 for DLL/service failure, offline state, phone loss, reboot, update rollback and uninstall.
 Never change LSA protection, Credential Guard, provider exclusions or default providers
 to make experimental authentication work. Do not automatically lock/reboot the laptop.
+
+The native development build performs no installation. Its installer explicitly refuses
+physical machines. In a disposable VM, the preview tile can request phone approval but
+cannot sign in. Use normal Windows sign-in options. See [native development](native-development.md)
+for VM-only uninstall and recovery of the project's own registration. Retain a known
+Windows password and a VM checkpoint; PIN is not guaranteed in Safe Mode/recovery.

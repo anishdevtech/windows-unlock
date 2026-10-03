@@ -17,9 +17,15 @@
 6. **Phase 6:** restricted service IPC and V2 Credential Provider. Disposable VM-first;
    local console scenarios only. Real Windows authentication disabled until a compatible
    password-free account-specific path is verified under LSA protection and recovery.
+   Native approval-preview DLL/service and ordinary-process security harnesses now
+   exist. No installation or actual LogonUI/LSA acceptance has been performed. See
+   [native verification](native-verification.md); the authentication mechanism remains
+   a separate implementation and compatibility gate.
 7. **Phase 7:** independent Android attestation, signer identities, signed builds,
    transactional WiX setup/uninstall, least privilege, secrets/retention/backup policy,
    fuzzing, dependency review, supported Windows update matrix and recovery drills.
+   VM-only PowerShell preview install/uninstall and publisher-signing sources now
+   exist; production WiX/signing/recovery acceptance remains incomplete.
 
 Additional prerequisites: Android phone with secure screen lock and strong biometric
 or system credential; API 30+; signed release APK for distribution; relay hostname and

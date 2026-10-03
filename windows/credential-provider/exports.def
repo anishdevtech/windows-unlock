@@ -1,0 +1,4 @@
+LIBRARY CredentialProviderPreview
+EXPORTS
+  DllGetClassObject PRIVATE
+  DllCanUnloadNow PRIVATE

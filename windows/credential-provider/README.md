@@ -1,9 +1,18 @@
-# Deferred Phase 6 Credential Provider
+# V2 Credential Provider approval preview
 
-V2 native COM provider, local console CPUS_LOGON/CPUS_UNLOCK_WORKSTATION only.
-No networking or camera in DLL; asynchronous bounded IPC and visible PIN fallback.
-No provider filter, wrapping, default selection changes or password/PIN automation.
+`CredentialProviderPreview.dll` implements native COM `ICredentialProvider`,
+`ICredentialProviderSetUserArray`, and SID-bound `ICredentialProviderCredential2`.
+It exposes **Unlock with Phone**, starts asynchronous approval when selected, shows
+waiting/approval/denial/expiry/unavailable status, and displays **Sign-in options → PIN**.
+Only local console logon/unlock scenarios are enumerated. Networking, pairing,
+cryptography and cameras stay outside the DLL.
 
-Do not register this component until a password-free Windows authentication path
-compatible with the account type and protected LSA is proven in disposable VMs.
-Successful desktop signature verification alone does not supply a Windows credential.
+**GetSerialization always returns CPGSR_NO_CREDENTIAL_NOT_FINISHED and an empty
+credential.** Valid desktop phone signatures cannot sign in to Windows. No default
+override, provider filter, automatic sign-in, stored password or PIN simulation exists.
+IPC is bounded; UI events return to the subscription thread.
+
+The COM harness loads the DLL as an ordinary process without registration. Builds
+do not install it; there is no self-registration export. See
+[native development](../../docs/native-development.md) for VM-only testing and the
+separate Windows authentication release gate.

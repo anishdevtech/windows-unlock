@@ -15,6 +15,13 @@ Windows Hello PIN and password remain independent recovery methods. No Windows
 password, Windows PIN, biometric template, or private Android key is transmitted.
 No Credential Provider or LSA package is installed in this phase.
 
+Native development now includes a compiled V2 Credential Provider, LocalSystem
+approval-preview service, restricted IPC, protected enrollment staging, and a
+disposable-VM-only installer. The DLL always returns **no Windows credential**,
+including after valid phone approval. Run `scripts/Build-NativePreview.ps1` to build
+without installing anything. See [native development](docs/native-development.md)
+and [native verification](docs/native-verification.md) for tested behavior and remaining gates.
+
 The desktop companion can optionally send a test approval prompt when the current
 Windows session locks, including while it runs in the tray. Enable its explicit
 lock-prompt setting after hosted pairing. Phone approval still does not unlock Windows.

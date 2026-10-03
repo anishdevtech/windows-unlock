@@ -27,7 +27,7 @@ relay/database, and eventually LogonUI/LSA. The Phase 1 UI has no Windows logon 
 | Malicious pairing client | Single-use 5-minute invitation, proof of key possession, 64-bit displayed transcript comparison, explicit confirmation on both screens. |
 | False hardware/biometric claim | Phase 1 only reports Android KeyInfo; verified attestation and signed application distribution are production gates. Signature alone does not prove which biometric was used. |
 | Tampered local config | DPAPI current-user protection and owner ACL. Corrupt configuration fails closed; same-user malware/admin remains outside this boundary. |
-| Privilege escalation | No privileged service/CP in Phase 1. Later IPC must reject remote callers, impersonate and authorize OS tokens, distinguish setup and LogonUI APIs. |
+| Privilege escalation | Phase 1 remains unprivileged. Native preview uses a SYSTEM-only, remote-rejecting pipe, validates actual LogonUI process/session and registered LocalSystem server PID, and keeps enrollment staging outside IPC. Preview always emits no Windows credential. VM validation remains required. |
 | Private data leaks | No secret logging, public-key-only backend, short-lived pairing artifacts, no camera permission in Phase 1. |
 
 Never transmit biometric data, phone screen credentials, Windows PIN/password, or
@@ -37,6 +37,21 @@ requires explicit pairing again. Reinstalling must not silently trust backend ke
 Future sign-in: bind approval to Windows account, session, usage scenario and selected
 tile; do not reuse desktop-demo signatures. Validate locally inside the authentication
 boundary, rather than accepting a service Boolean. Keep all Microsoft providers.
+
+Native-preview trust is frozen in machine-DPAPI enrollment with SYSTEM/Administrators
+ACLs and ownership checks. Null/broad ACLs and reparse files/directories fail closed.
+A nonprivileged process cannot replace enrollment or open the service endpoint; a
+local administrator or injected SYSTEM process is outside this boundary. The client
+uses identification-only SQOS so a fake pipe cannot acquire an impersonation token.
+The pipe's first instance stays open between clients, preventing a name takeover.
+No HTTP or camera code runs in the provider DLL.
+
+The preview reuses `desktop-approval` messages and the paired user's CNG key. It is
+not a Windows authentication authority, attestation verifier, production revocation
+system or cold-boot sign-in solution. Remove the staged VM enrollment and stop the
+preview service before unpairing/replacing the desktop identity. A compromised relay
+can hide revocation; production revocation must be enforced locally at the eventual
+authentication boundary. Approval status must never be treated as an LSA credential.
 
 Production requires independent key-attestation chain/revocation/application-identity
 verification; trusted roots must account for Android root rotation. A compromised

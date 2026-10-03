@@ -1,5 +1,9 @@
 # Lock-event prompt verification — 2026-10-04
 
+This records the earlier desktop-only milestone. Subsequent native preview work is
+recorded in [native verification](native-verification.md); real Windows authentication
+remains unavailable and nothing has been installed on the laptop.
+
 The rebuilt companion adds an opt-in OS session-lock notification trigger. The
 Credential Provider and actual Windows authentication mechanism remain unimplemented.
 See `windows-sign-in-status.md` for the exact release gates.

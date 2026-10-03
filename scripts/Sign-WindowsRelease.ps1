@@ -1,11 +1,14 @@
 param(
   [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$CertificateThumbprint,
-  [ValidatePattern('^https://')][string]$TimestampUrl='https://timestamp.digicert.com'
+  [ValidatePattern('^https://')][string]$TimestampUrl='https://timestamp.digicert.com',
+  [switch]$IncludeNativePreview
 )
 $ErrorActionPreference='Stop'
 $taskRoot=Split-Path -Parent $PSScriptRoot
-$taskBinary=Join-Path $taskRoot 'build\windows\Release\phoneunlock.exe'
-if(-not(Test-Path -LiteralPath $taskBinary)){throw 'Build the Windows Release executable first.'}
+$taskNames=@('phoneunlock.exe')
+if($IncludeNativePreview){$taskNames+=@('CredentialProviderPreview.dll','PhoneUnlockPreviewService.exe','PhoneUnlockPreviewStage.exe')}
+$taskBinaries=@($taskNames | ForEach-Object {Join-Path $taskRoot "build\windows\Release\$_"})
+foreach($taskBinary in $taskBinaries){if(-not(Test-Path -LiteralPath $taskBinary)){throw 'Build the Windows Release binaries first.'}}
 $taskCertificate=Get-Item -LiteralPath "Cert:\CurrentUser\My\$CertificateThumbprint" -ErrorAction Stop
 if(-not $taskCertificate.HasPrivateKey){throw 'The selected publisher certificate has no available private key.'}
 if($taskCertificate.NotAfter -le (Get-Date) -or $taskCertificate.NotBefore -gt (Get-Date)){throw 'The selected certificate is outside its validity period.'}
@@ -23,10 +26,12 @@ $taskSignTool=Get-ChildItem -LiteralPath $taskSdk -Directory | Sort-Object Name 
   ForEach-Object {Join-Path $_.FullName 'x64\signtool.exe'} | Where-Object {Test-Path -LiteralPath $_} | Select-Object -First 1
 if(-not $taskSignTool){throw 'Install the Windows SDK signing tools.'}
 # Uses the Windows certificate store/provider; never exports a private key or asks for a PFX password.
-& $taskSignTool sign /sha1 $CertificateThumbprint /s My /fd SHA256 /tr $TimestampUrl /td SHA256 $taskBinary
-if($LASTEXITCODE){throw 'Publisher signing failed.'}
-& $taskSignTool verify /pa /all $taskBinary
-if($LASTEXITCODE){throw 'Authenticode verification failed.'}
-if((Get-AuthenticodeSignature -LiteralPath $taskBinary).Status -ne 'Valid'){throw 'Windows does not validate this publisher signature.'}
-Write-Output 'Release companion signed and verified. OS Application Control makes the final launch decision.'
-Write-Output 'This signs only the desktop companion. It does not provide the separate Microsoft LSA-package signature or enable Windows sign-in.'
+foreach($taskBinary in $taskBinaries){
+  & $taskSignTool sign /sha1 $CertificateThumbprint /s My /fd SHA256 /tr $TimestampUrl /td SHA256 $taskBinary
+  if($LASTEXITCODE){throw 'Publisher signing failed.'}
+  & $taskSignTool verify /pa /all $taskBinary
+  if($LASTEXITCODE){throw 'Authenticode verification failed.'}
+  if((Get-AuthenticodeSignature -LiteralPath $taskBinary).Status -ne 'Valid'){throw 'Windows does not validate this publisher signature.'}
+}
+Write-Output 'Release binaries signed and verified. OS Application Control makes the final launch decision.'
+Write-Output 'Publisher signing does not provide the separate Microsoft LSA-package signature or enable Windows sign-in.'

@@ -1,9 +1,11 @@
 # Windows lock-screen integration status
 
 Phone approval and Windows sign-in are separate operations. The current executable
-verifies a phone signature; **it cannot unlock Windows**. There is no implemented or
-registered Credential Provider, sign-in service, or authentication package in this
-repository. The files in those directories describe future release requirements.
+verifies a phone signature; **it cannot unlock Windows**. The repository now has a
+compiled V2 Credential Provider and approval-preview Windows service. Neither is
+installed on this laptop. No Windows authentication package is implemented. The
+provider always returns an empty credential, even after phone approval. See
+[native development](native-development.md) and [verification](native-verification.md).
 Successful Firebase delivery, `/health`, or phone approval does not change this.
 
 ## This laptop
@@ -60,8 +62,8 @@ delivery. If the hosted state does not exist, follow `windows-one-time-setup.md`
    A Credential Provider gathers/serializes credentials; Windows authentication
    packages decide whether to accept them. A phone ES256 signature is not, by itself,
    a credential for Microsoft's built-in sign-in packages.
-2. Implement and audit the V2 Credential Provider, restricted service IPC, and the
-   actual accepted authentication mechanism. A custom LSA authentication package is
+2. Validate the implemented V2 provider/service in a disposable VM, and implement
+   and audit the actual accepted authentication mechanism. A custom LSA package is
    a substantial security component, not a relay endpoint. Account/SID binding,
    tamper-resistant enrollment, local verification, single-use consumption, Windows
    token/profile/DPAPI behavior, revocation and unlock/logon differences all need proof.
@@ -74,8 +76,11 @@ delivery. If the hosted state does not exist, follow `windows-one-time-setup.md`
    Preserve every Microsoft provider; use no filter, default-provider replacement,
    PIN simulation, saved Windows password or reduced OS security.
 
-Until these requirements are satisfied, an installer must refuse real sign-in
-registration. No claim of complete lock-screen unlocking is made by this build.
+Until these requirements are satisfied, Windows credential serialization remains
+disabled in code. The separate preview installer refuses physical machines and only
+adds an approval-test tile in a disposable VM. It installs no LSA package. The user
+explicitly chose continued development without installation on 2026-10-04. No VM,
+service, provider, machine enrollment or signing certificate was installed for this work.
 
 ## Application Control on this installation
 

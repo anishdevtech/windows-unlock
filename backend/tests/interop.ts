@@ -1,0 +1,14 @@
+import { generateKeyPair, exportJWK, CompactSign, compactVerify, importJWK } from 'jose';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import {dirname} from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { generateKeyPairSync,privateDecrypt,createDecipheriv,constants } from 'node:crypto';
+import assert from 'node:assert/strict';
+const [exe,file]=process.argv.slice(2);if(!exe||!file)throw new Error('interop <core_tests.exe> <fixture-output>');
+const k=await generateKeyPair('ES256',{extractable:true});const jwk=await exportJWK(k.publicKey);
+const token=await new CompactSign(Buffer.from(JSON.stringify({v:1,purpose:'desktop-approval',type:'auth-response',test:'node-to-windows'}))).setProtectedHeader({alg:'ES256',typ:'phoneunlock+jws'}).sign(k.privateKey);
+const rsa=generateKeyPairSync('rsa',{modulusLength:2048});const full=rsa.publicKey.export({format:'jwk'});const cameraJwk={kty:full.kty,n:full.n,e:full.e};
+mkdirSync(dirname(file),{recursive:true});writeFileSync(file,JSON.stringify({jwk,token,cameraJwk}));const r=spawnSync(exe,['--interop',file],{encoding:'utf8'});if(r.status!==0)throw new Error('Windows interoperability check failed');
+const result=JSON.parse(readFileSync(file+'.windows.json','utf8'));await compactVerify(result.token,await importJWK(result.jwk,'ES256'),{algorithms:['ES256']});console.log('Node -> CNG and CNG -> Node ES256 interoperability passed');
+const frame=result.cameraFrame;const secret=privateDecrypt({key:rsa.privateKey,padding:constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},Buffer.from(frame.wrappedKey,'base64url'));
+const encrypted=Buffer.from(frame.ciphertext,'base64url');const decipher=createDecipheriv('aes-256-gcm',secret,Buffer.from(frame.iv,'base64url'));decipher.setAAD(Buffer.from('test-session:1'));decipher.setAuthTag(encrypted.subarray(-16));assert.equal(Buffer.concat([decipher.update(encrypted.subarray(0,-16)),decipher.final()]).toString(),'camera');secret.fill(0);console.log('CNG -> Node RSA-OAEP-256 / AES-256-GCM camera interoperability passed');

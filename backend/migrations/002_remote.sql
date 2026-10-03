@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS remote_offers(id uuid PRIMARY KEY,data jsonb NOT NULL);
+CREATE TABLE IF NOT EXISTS remote_commands(id uuid PRIMARY KEY,data jsonb NOT NULL);
+CREATE TABLE IF NOT EXISTS camera_frames(id uuid PRIMARY KEY,data jsonb NOT NULL);
+CREATE TABLE IF NOT EXISTS rate_limits(id text PRIMARY KEY,data jsonb NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS one_command_per_offer ON remote_commands((data->>'offerId'));
+CREATE UNIQUE INDEX IF NOT EXISTS remote_nonce_unique ON remote_offers((data->>'nonce'));
+CREATE INDEX IF NOT EXISTS remote_pair ON remote_offers((data->>'pairingId'));
+CREATE INDEX IF NOT EXISTS commands_windows ON remote_commands((data->>'windowsDeviceId'));
+CREATE UNIQUE INDEX IF NOT EXISTS windows_token_lookup ON windows_devices((data->>'tokenHash'));
+CREATE UNIQUE INDEX IF NOT EXISTS android_token_lookup ON android_devices((data->>'tokenHash'));
+CREATE INDEX IF NOT EXISTS auth_phone_lookup ON authentication_requests((data->>'androidDeviceId'));
+CREATE INDEX IF NOT EXISTS pair_phone_lookup ON device_pairings((data->>'androidDeviceId'));

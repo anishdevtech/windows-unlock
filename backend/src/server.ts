@@ -1,0 +1,18 @@
+import { readFileSync } from 'node:fs';
+import { createApp } from './relay.js';
+import { PgStore } from './store.js';
+import { configuration,database } from './config.js';
+import { firebasePush } from './push.js';
+
+const c=configuration();
+const managed=process.env.VERCEL==='1';
+if (!managed&&(!c.tlsKey || !c.tlsCert)) throw new Error('TLS configuration is required outside Vercel');
+const pool=database(c);
+await pool.query('SELECT 1');
+const app=createApp(new PgStore(pool),managed?undefined:{key:readFileSync(c.tlsKey),cert:readFileSync(c.tlsCert)},firebasePush());
+await app.listen({host:managed?'0.0.0.0':c.host??'127.0.0.1',port:Number(process.env.PORT??c.port??(managed?3000:8443))});
+console.log('WINDOWS-UNLOCK relay ready; Windows sign-in remains unchanged');
+let closing=false;
+for(const signal of ['SIGINT','SIGTERM'] as const) process.on(signal,()=>{
+  if(closing)return;closing=true;void app.close().then(()=>pool.end());
+});

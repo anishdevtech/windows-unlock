@@ -1,0 +1,31 @@
+{
+  "name": "windows-unlock-relay",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/src/server.js",
+    "test": "tsx --test tests/*.test.ts",
+    "migrate": "tsx src/cli.ts migrate",
+    "bootstrap": "tsx src/cli.ts bootstrap"
+  },
+  "dependencies": {
+    "fastify": "5.12.5",
+    "firebase-admin": "14.5.0",
+    "jose": "6.2.12",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/pg": "8.15.6",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "gaxios@6.7.1": { "uuid": "11.1.1" }
+  }
+}

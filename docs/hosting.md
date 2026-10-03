@@ -73,6 +73,22 @@ failure cannot approve, roll back or extend a request. HTTP polling also works o
 serverless hosting. Budget for database connections and live-preview request bandwidth;
 preview is at most two frames/second, and normally slower over a distant relay.
 
+### Vercel startup hangs despite a working local server
+
+Vercel's Node runtime intercepts `http.Server.listen()` during module import to
+capture the server, then starts that server itself. The interception does not invoke
+the original listening callback. Awaiting Fastify's `app.listen()` at the module top
+level therefore prevents import from completing, even though ordinary local startup
+works. This can appear as `INTERNAL_FUNCTION_INVOCATION_FAILED` with no useful function
+exception and a request stuck waiting for a response.
+
+The managed startup path now awaits route readiness and starts the listen operation
+without waiting for its listening promise. Standalone HTTPS startup continues to await
+listening and propagates port/bind errors. Deploy the commit containing `runtime.ts`
+and the updated server entry point. This matches
+[Vercel's server capture implementation](https://github.com/vercel/vercel/blob/main/packages/node/src/serverless-functions/serverless-handler.mts)
+and the non-awaited listen call in its [Fastify example](https://vercel.com/docs/frameworks/backend/fastify).
+
 Run `npx tsx src/cli.ts prune` daily from a trusted scheduled operator environment to
 remove expired encrypted frames, old transport rows and rate buckets. The read routes
 reject expired sessions even before pruning. The database holds one latest encrypted

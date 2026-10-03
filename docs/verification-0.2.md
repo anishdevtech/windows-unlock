@@ -119,3 +119,22 @@ Start-Hosted-Local.ps1 supplies a repeatable local run using explicit .env loadi
 the provisioned development certificates. This local-host test still needs internet
 to reach the hosted database and Firebase. No Windows account, PIN, companion pairing,
 camera or power setting was changed. Vercel execution remains a separate check.
+
+## Vercel intercepted-listen startup correction — 2026-10-04
+
+The signed-in Vercel dashboard showed the latest cea17bd deployment still returning
+INTERNAL_FUNCTION_INVOCATION_FAILED with no application exception and requests waiting
+for a response. The upstream Node handler intercepts http.Server.listen during module
+import and returns the server without invoking its callback/listening event.
+
+A local reproduction using the actual compiled entry point and operator credentials
+captured the server but never completed module import before the diagnostic timeout.
+The managed startup path now completes route readiness, starts listening without
+awaiting the intercepted promise, and allows module import to finish. Standalone TLS
+startup retains its awaited bind behavior. A regression test reproduces the capture,
+then starts the captured server as Vercel does and checks health/protected routes.
+
+TypeScript build and all 28 backend tests passed. The corrected actual entry point was
+also exercised with the real hosted database under the interception harness: module
+import completed, /health returned 200 and unauthenticated approval polling returned
+401. Neither harness sends push messages or changes laptop power/camera state.

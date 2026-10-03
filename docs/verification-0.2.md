@@ -138,3 +138,17 @@ TypeScript build and all 28 backend tests passed. The corrected actual entry poi
 also exercised with the real hosted database under the interception harness: module
 import completed, /health returned 200 and unauthenticated approval polling returned
 401. Neither harness sends push messages or changes laptop power/camera state.
+
+The fix was committed as 6434445 and pushed to the connected main branch. Vercel
+deployment dpl_3zBB3W4EGVWs3YKqBup9JTaUB4qo completed successfully. Real HTTPS requests
+to the production windows-unlock.vercel.app domain returned /health 200 with status ok,
+and both unauthenticated pending-approval and remote-offer endpoints returned 401.
+The deployment-specific URL still requires Vercel Authentication; devices use the
+public production domain. No deployment protection was disabled.
+
+A one-time Windows operator setup script and walkthrough were added after production
+verification. The script creates separate DPAPI-protected hosted state, registers the
+public identity using the private operator environment, removes the imported transfer
+token and optionally adds a current-user Startup shortcut. It was checked for PowerShell
+syntax and reviewed against the existing native CLI. It has not been executed: actual
+pairing and optional startup registration are left for the user's explicit setup run.

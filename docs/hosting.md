@@ -141,6 +141,13 @@ node --env-file=.env --import tsx src/cli.ts migrate
 
 ## Point Windows and Android at your hosted URL
 
+For this development laptop, the repeatable operator setup is documented in
+[One-time hosted Windows setup](windows-one-time-setup.md). With the Windows build
+and ignored operator `backend/.env` already present, run
+`scripts/Setup-HostedWindows.ps1 -AutoStart -Launch` from the repository root.
+It uses a separate protected hosted state and preserves the old local pairing.
+The following manual procedure is for intentionally reusing the old identity instead.
+
 Close the Windows companion (right-click tray -> Exit). Unpair on the old relay before
 switching, and reset Android pairing. Export the Windows identity using `--public`.
 After operator bootstrap, configure the same identity for the hosted URL:

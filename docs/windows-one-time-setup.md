@@ -6,10 +6,11 @@ This procedure configures the desktop companion; it does not install a Credentia
 Provider or turn phone approval into actual Windows lock-screen sign-in. Normal
 Windows PIN/password remain available.
 
-On this development laptop, Application Control currently blocks the rebuilt unsigned
-companion. A trusted publisher signature is required before its launch/setup can be
-tested. See [current Windows sign-in and signing status](windows-sign-in-status.md).
-The existing hosted pairing was preserved; do not reset it to address this block.
+On this development laptop, Application Control rejected an interim unsigned build;
+the final build subsequently launched normally without policy changes. Use a trusted
+publisher signature for distributed releases, rather than relying on unsigned-build
+reputation. See [current Windows sign-in and signing status](windows-sign-in-status.md).
+The existing hosted pairing was preserved; do not reset it to address a launch block.
 
 On the development laptop, with the Windows build and private operator `backend/.env`
 already present, open PowerShell in the project folder and run:

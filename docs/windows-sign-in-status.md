@@ -79,15 +79,18 @@ registration. No claim of complete lock-screen unlocking is made by this build.
 
 ## Application Control on this installation
 
-The rebuilt unsigned companion was blocked by Windows Application Control, with
+An interim unsigned companion was blocked by Windows Application Control, with
 Code Integrity event 3077 and policy `VerifiedAndReputableDesktop`. The Release
-security-test executable ran successfully; the companion launch did not. No policy,
+security-test executable ran successfully. A final normal rebuild successfully ran
+the hosted CLI diagnostic and was opened as the hosted desktop companion. Its report
+showed healthy relay, existing pairing and available session state. No policy,
 exclusion, trusted root, LSA protection or PIN setting was changed to get around the
-block. The previous local companion was stopped for the rebuild; the new companion
-is not running. The current user's certificate store has no code-signing certificate
+block. The previous companion was stopped for the rebuild and the final hosted
+companion was opened. The current user's certificate store has no code-signing certificate
 with an available private key at the time of inspection.
 
-Use a trusted publisher signing certificate/provider for the desktop executable.
+Use a trusted publisher signing certificate/provider for distributed desktop releases.
+Acceptance of the final unsigned build does not guarantee later builds will launch.
 If an appropriate RSA code-signing certificate with its private key is available in
 the current user's Windows certificate store, the release workflow is:
 
@@ -107,7 +110,7 @@ The existing hosted identity and phone pairing were preserved. Read-only checks
 confirmed active hosted pairing, a registered FCM token, and Firebase dry-run
 acceptance; no notification was sent. The separate local configuration points to a
 relay that was unavailable during inspection. Use the **WINDOWS-UNLOCK Hosted** shortcut
-after signing; it points to the hosted configuration rather than `.runtime`.
+for hosted use; it points to the hosted configuration rather than `.runtime`.
 
 ## Primary references
 

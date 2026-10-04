@@ -24,7 +24,7 @@ std::string tlsPin(const Bytes& spki);
 Json parse(const std::string& text);
 Json publicJwk(const Json& jwk);
 Json decode(const std::string& token);
-Json verify(const std::string& token, const Json& jwk, const std::string& type);
+Json verify(const std::string& token, const Json& jwk, const std::string& type, const std::string& purpose="desktop-approval");
 std::string read(const std::filesystem::path& file);
 void write(const std::filesystem::path& file, const std::string& text);
 void save(const std::filesystem::path& file, const Json& config);
@@ -38,7 +38,7 @@ public:
   Json jwk() const;
   std::string sign(const Json& payload) const;
 };
-Json message(const std::string& type);
+Json message(const std::string& type, const std::string& purpose="desktop-approval");
 class PendingApproval {
   Json request_,pairing_;std::string token_;std::chrono::steady_clock::time_point deadline_;std::atomic<bool> pending_{true};
 public:

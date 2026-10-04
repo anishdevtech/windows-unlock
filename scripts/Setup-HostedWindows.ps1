@@ -23,7 +23,8 @@ if(-not(Test-Path -LiteralPath $taskMarker) -and -not(Test-Path -LiteralPath $ta
 }
 # Verify the public endpoint using normal Windows TLS trust before changing local state.
 $taskHealth=Invoke-RestMethod -Uri "$RelayUrl/health" -TimeoutSec 20
-if($taskHealth.status -ne 'ok' -or $taskHealth.mode -ne 'desktop-approval-only'){throw 'Hosted relay is not ready or has an unexpected protocol mode.'}
+$taskDesktopSupported=$taskHealth.mode -eq 'desktop-approval-only' -or ($taskHealth.mode -eq 'approval-relay' -and $taskHealth.protocolPurposes -contains 'desktop-approval')
+if($taskHealth.status -ne 'ok' -or -not $taskDesktopSupported){throw 'Hosted relay is not ready or has an unexpected protocol mode.'}
 New-Item -ItemType Directory -Force -Path $taskState | Out-Null
 $taskSid=[Security.Principal.WindowsIdentity]::GetCurrent().User
 $taskAcl=New-Object Security.AccessControl.DirectorySecurity

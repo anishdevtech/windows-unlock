@@ -53,12 +53,27 @@ bool systemProcess(DWORD process,const wchar_t* image){
   }catch(...){return false;}
 }
 bool valid(const Request& r){return r.magic==WireMagic&&r.version==WireVersion&&r.operation>=Operation::Describe&&r.operation<=Operation::Cancel&&(r.scenario==1||r.scenario==2)&&terminated(r.sid)&&validSid(r.sid.data())&&(r.operation==Operation::Describe||!IsEqualGUID(r.operationId,GUID{}));}
-bool valid(const Response& r,const Request& q){return r.magic==WireMagic&&r.version==WireVersion&&r.state>=State::Unavailable&&r.state<=State::NotConfigured&&r.windowsSignInEnabled==0&&r.reserved==0&&terminated(r.sid)&&terminated(r.phoneName)&&r.sid==q.sid&&IsEqualGUID(r.operationId,q.operationId);}
+bool valid(const Response& r,const Request& q){
+#ifdef PU_WINDOWS_UNLOCK
+  if(r.windowsSignInEnabled!=1||r.proofSize>=ProofCapacity||(r.state==State::ApprovedSignIn?r.proofSize==0:r.proofSize!=0))return false;
+  constexpr State last=State::ApprovedSignIn;
+#else
+  if(r.windowsSignInEnabled!=0)return false;constexpr State last=State::NotConfigured;
+#endif
+  return r.magic==WireMagic&&r.version==WireVersion&&r.state>=State::Unavailable&&r.state<=last&&r.reserved==0&&terminated(r.sid)&&terminated(r.phoneName)&&r.sid==q.sid&&IsEqualGUID(r.operationId,q.operationId);
+}
+bool serviceProcess(DWORD process){return registeredService(process);}
 std::wstring statusText(State s){switch(s){
-  case State::Ready:return L"Approval preview ready. Windows PIN is still required.";
+  case State::Ready:
+#ifdef PU_WINDOWS_UNLOCK
+    return L"Ready. Select Unlock with Phone, or use Windows PIN.";
+#else
+    return L"Approval preview ready. Windows PIN is still required.";
+#endif
   case State::Waiting:return L"Waiting for phone approval...";
   case State::PushUnavailable:return L"Push unavailable. Open Android to review, or use Windows PIN.";
   case State::ApprovedPreview:return L"Phone signature verified. Windows sign-in is not enabled. Use Sign-in options → PIN.";
+  case State::ApprovedSignIn:return L"Phone approved. Signing in...";
   case State::Denied:return L"Request denied. Use Windows PIN.";
   case State::Expired:return L"Request expired. Use Windows PIN.";
   case State::Cancelled:return L"Request cancelled. Use Windows PIN.";
@@ -68,7 +83,7 @@ std::wstring statusText(State s){switch(s){
 bool authorizeLogonUi(HANDLE pipe,Caller& caller){DWORD process{},session{};if(!GetNamedPipeClientProcessId(pipe,&process)||!ProcessIdToSessionId(process,&session)||session!=WTSGetActiveConsoleSessionId()||!systemProcess(process,L"LogonUI.exe"))return false;caller={process,session};return true;}
 void serve(const std::wstring& name,const std::wstring& sddl,HANDLE stop,const Authorize& authorize,const Dispatch& dispatch,const std::function<void()>& readyCallback){
   Local descriptor;require(ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(),SDDL_REVISION_1,reinterpret_cast<PSECURITY_DESCRIPTOR*>(&descriptor.value),nullptr)!=FALSE,"Pipe ACL unavailable");SECURITY_ATTRIBUTES security{sizeof(security),descriptor.value,FALSE};
-  Handle pipe(CreateNamedPipeW(name.c_str(),PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED|FILE_FLAG_FIRST_PIPE_INSTANCE,PIPE_TYPE_MESSAGE|PIPE_READMODE_MESSAGE|PIPE_WAIT|PIPE_REJECT_REMOTE_CLIENTS,1,1024,1024,750,&security));require(bool(pipe),"Pipe already owned or unavailable");
+  Handle pipe(CreateNamedPipeW(name.c_str(),PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED|FILE_FLAG_FIRST_PIPE_INSTANCE,PIPE_TYPE_MESSAGE|PIPE_READMODE_MESSAGE|PIPE_WAIT|PIPE_REJECT_REMOTE_CLIENTS,1,sizeof(Response),sizeof(Request),750,&security));require(bool(pipe),"Pipe already owned or unavailable");
   if(readyCallback)readyCallback();
   // Keep the first pipe instance alive across connections so a name cannot be stolen.
   while(WaitForSingleObject(stop,0)!=WAIT_OBJECT_0){auto ready=event();OVERLAPPED op{};op.hEvent=ready.get();BOOL connected=ConnectNamedPipe(pipe.get(),&op);DWORD error=connected?ERROR_SUCCESS:GetLastError();

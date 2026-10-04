@@ -25,6 +25,13 @@ class ProtocolTest {
         try { Protocol.verify(token, jwk, "auth-request"); fail("Wrong purpose accepted") } catch (_: IllegalArgumentException) {}
     }
     @Test fun privateKeyRejected() { try { Protocol.publicKey(JSONObject().put("kty", "EC").put("crv", "P-256").put("x", "x").put("y", "y").put("d", "secret")); fail() } catch (_: IllegalArgumentException) {} }
+    @Test fun windowsUnlockPurposeIsRestrictedToAuthenticationMessages() {
+        val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        val jwk = JSONObject(ECKey.Builder(Curve.P_256, pair.public as ECPublicKey).build().toJSONString())
+        fun signed(type: String): String { val sig = Signature.getInstance("SHA256withECDSA").apply { initSign(pair.private) }; return Protocol.sign(Protocol.input(Protocol.message(type, "windows-unlock")), sig) }
+        assertEquals("windows-unlock", Protocol.verify(signed("auth-response"), jwk, "auth-response").getString("purpose"))
+        try { Protocol.verify(signed("remote-command"), jwk, "remote-command"); fail("Unlock purpose accepted for remote command") } catch (_: IllegalArgumentException) {}
+    }
     @Test fun cngCameraEncryptionVerifiesOnJca() {
         val output = System.getProperty("phoneunlock.fixtureOutput") ?: return
         val root = java.io.File(output).parentFile?.parentFile ?: return

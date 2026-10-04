@@ -1,0 +1,9 @@
+LIBRARY WindowsUnlockAuth
+EXPORTS
+  SpLsaModeInitialize
+  LsaApInitializePackage
+  LsaApCallPackage
+  LsaApCallPackageUntrusted
+  LsaApCallPackagePassthrough
+  LsaApLogonUserEx2
+  LsaApLogonTerminated

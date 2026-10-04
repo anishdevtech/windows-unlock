@@ -13,7 +13,7 @@ object Protocol {
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     fun b64(bytes: ByteArray): String = encoder.encodeToString(bytes)
     fun hash(text: String): String = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 255) }
-    fun message(type: String): JSONObject = JSONObject().put("v", 1).put("purpose", "desktop-approval").put("type", type)
+    fun message(type: String, purpose: String = "desktop-approval"): JSONObject = JSONObject().put("v", 1).put("purpose", purpose).put("type", type)
     fun publicKey(j: JSONObject): ECKey {
         require(j.keys().asSequence().toSet() == setOf("kty", "crv", "x", "y"))
         require(j.getString("kty") == "EC" && j.getString("crv") == "P-256")
@@ -34,7 +34,8 @@ object Protocol {
     }
     fun verify(token: String, key: JSONObject, type: String): JSONObject {
         val p = decode(token); require(JWSObject.parse(token).verify(ECDSAVerifier(publicKey(key))))
-        require(p.getInt("v") == 1 && p.getString("purpose") == "desktop-approval" && p.getString("type") == type)
+        val purpose = p.getString("purpose")
+        require(p.getInt("v") == 1 && (purpose == "desktop-approval" || (purpose == "windows-unlock" && type in setOf("auth-request", "auth-response"))) && p.getString("type") == type)
         return p
     }
     fun input(payload: JSONObject): String = b64("{\"alg\":\"ES256\",\"typ\":\"phoneunlock+jws\"}".toByteArray()) + "." + b64(payload.toString().toByteArray(Charsets.UTF_8))

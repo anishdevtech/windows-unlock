@@ -13,8 +13,16 @@ DWORD WINAPI control(DWORD command,DWORD type,LPVOID data,LPVOID){
 void WINAPI serviceMain(DWORD,LPWSTR*){
   statusHandle=RegisterServiceCtrlHandlerExW(ServiceName,control,nullptr);if(!statusHandle)return;
   report(SERVICE_START_PENDING);
-  try{require(currentSid()==L"S-1-5-18","LocalSystem service required");stopped=event();broker.store(std::make_shared<pu::preview::Broker>());
-    serve(PipeName,L"D:P(A;;GA;;;SY)",stopped.get(),authorizeLogonUi,[](const Request& q,const Caller& c){if(auto active=broker.load())return active->dispatch(q,c);Response reply;reply.sid=q.sid;reply.operationId=q.operationId;return reply;},[]{report(SERVICE_RUNNING);});
+  try{require(currentSid()==L"S-1-5-18","LocalSystem service required");
+#ifdef PU_WINDOWS_UNLOCK
+    HANDLE raw{};require(OpenProcessToken(GetCurrentProcess(),TOKEN_ADJUST_PRIVILEGES|TOKEN_QUERY,&raw)!=FALSE,"Service privileges unavailable");Handle token(raw);TOKEN_PRIVILEGES privilege{};privilege.PrivilegeCount=1;require(LookupPrivilegeValueW(nullptr,SE_TCB_NAME,&privilege.Privileges[0].Luid)!=FALSE,"TCB privilege unavailable");privilege.Privileges[0].Attributes=SE_PRIVILEGE_ENABLED;SetLastError(ERROR_SUCCESS);require(AdjustTokenPrivileges(token.get(),FALSE,&privilege,0,nullptr,nullptr)&&GetLastError()==ERROR_SUCCESS,"TCB privilege not assigned");
+#endif
+    stopped=event();broker.store(std::make_shared<pu::preview::Broker>());
+    serve(PipeName,L"D:P(A;;GA;;;SY)",stopped.get(),authorizeLogonUi,[](const Request& q,const Caller& c){if(auto active=broker.load())return active->dispatch(q,c);Response reply;reply.sid=q.sid;reply.operationId=q.operationId;
+#ifdef PU_WINDOWS_UNLOCK
+      reply.windowsSignInEnabled=1;
+#endif
+      return reply;},[]{report(SERVICE_RUNNING);});
     report(SERVICE_STOP_PENDING);broker.store(nullptr);report(SERVICE_STOPPED);
   }catch(...){broker.store(nullptr);report(SERVICE_STOPPED,ERROR_SERVICE_SPECIFIC_ERROR);}
 }

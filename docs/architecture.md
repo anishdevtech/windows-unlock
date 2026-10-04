@@ -29,9 +29,10 @@ does not perform networking, snapshots, pairing or cryptography on LogonUI's thr
 
 A Credential Provider is not an authentication authority. An ES256 phone signature
 is not a credential accepted by built-in Negotiate. Password-free local/MSA sign-in
-requires a separately validated authentication path. Until that exists, real login
-is disabled. Never disable LSA protection to load an unsigned package. Personal
-Microsoft-account support and protected-LSA signing are unresolved release gates.
+requires a separately validated authentication path. Version 0.3 implements an SSP/AP
+LSA authority and separate provider/service targets. They are uninstalled. Personal
+Microsoft-account compatibility and protected-LSA/Winlogon validation are unresolved
+release gates. Never disable LSA protection to load an unsigned package.
 
 The native development implementation is `CredentialProviderPreview.dll` ->
 SYSTEM-only message pipe -> `PhoneUnlockPreviewService.exe` -> existing CNG/WinHTTP
@@ -41,6 +42,23 @@ approval status and **always returns no credential**. It never selects itself as
 default, requests automatic sign-in, or filters other providers. Setup staging is a
 separate elevated CLI, outside LogonUI. See [native development](native-development.md)
 for identity checks, enrollment protections and release boundaries.
+
+The actual unlock build uses a separate GUID, wire version and SYSTEM-only pipe:
+`CredentialProvider.dll` -> `WindowsUnlockService` -> `WindowsUnlockAuth.dll`.
+LSA creates the challenge and keeps a single-use lease; the broker signs/relays it and
+returns the signed proof. The provider serializes it with the custom package ID;
+LSA independently verifies both signatures, the exact locally pending challenge,
+live OS session/account/LogonUI context and public trust before returning token
+information. No camera/network operation runs in LSA or on LogonUI's UI thread.
+
+Machine-DPAPI `enrollment.dpapi` holds broker transport configuration; separate
+protected `trust.json` contains public keys/account bindings only. LSA does not
+decrypt server tokens. Setup and key staging are outside the lock-screen DLL.
+Authentication code links a crypto-only core; the desktop's power/camera modules
+are not linked into the authentication package. A read-only package lookup enables
+two-stage VM setup: register Microsoft-signed LSA, reboot normally, then activate the
+additional tile. Built-in providers and the normal PIN remain available throughout.
+See [signing/setup](lsa-signing-and-setup.md) and [validation](lsa-verification.md).
 
 ## Internet operation
 

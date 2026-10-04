@@ -1,12 +1,14 @@
 # Windows lock-screen integration status
 
 Phone approval and Windows sign-in are separate operations. The current executable
-verifies a phone signature; **it cannot unlock Windows**. The repository now has a
-compiled V2 Credential Provider and approval-preview Windows service. Neither is
-installed on this laptop. No Windows authentication package is implemented. The
-provider always returns an empty credential, even after phone approval. See
-[native development](native-development.md) and [verification](native-verification.md).
-Successful Firebase delivery, `/health`, or phone approval does not change this.
+verifies a phone signature; **the desktop companion cannot unlock Windows**. Version
+0.3 implements separate `WindowsUnlockAuth.dll`, `CredentialProvider.dll` and
+`PhoneUnlockService.exe` targets with actual signed-proof credential serialization
+and independent LSA verification. They are not installed on this laptop and real
+protected-LSA/Winlogon acceptance is unvalidated. The earlier Preview DLL still always
+returns an empty credential. See [LSA setup](lsa-signing-and-setup.md) and
+[current validation](lsa-verification.md). Successful Firebase delivery, `/health`
+or phone approval does not demonstrate Windows unlocked.
 
 ## This laptop
 
@@ -58,12 +60,12 @@ delivery. If the hosted state does not exist, follow `windows-one-time-setup.md`
 
 ## Required before real Windows sign-in can be enabled
 
-1. Prove a password-free Windows authentication path for the supported account type.
+1. Validate the implemented password-free Windows authentication path for the supported account type.
    A Credential Provider gathers/serializes credentials; Windows authentication
    packages decide whether to accept them. A phone ES256 signature is not, by itself,
    a credential for Microsoft's built-in sign-in packages.
-2. Validate the implemented V2 provider/service in a disposable VM, and implement
-   and audit the actual accepted authentication mechanism. A custom LSA package is
+2. Validate the actual V2 provider/service/LSA package in a disposable VM and audit
+   the authentication mechanism. A custom LSA package is
    a substantial security component, not a relay endpoint. Account/SID binding,
    tamper-resistant enrollment, local verification, single-use consumption, Windows
    token/profile/DPAPI behavior, revocation and unlock/logon differences all need proof.
@@ -76,9 +78,11 @@ delivery. If the hosted state does not exist, follow `windows-one-time-setup.md`
    Preserve every Microsoft provider; use no filter, default-provider replacement,
    PIN simulation, saved Windows password or reduced OS security.
 
-Until these requirements are satisfied, Windows credential serialization remains
-disabled in code. The separate preview installer refuses physical machines and only
-adds an approval-test tile in a disposable VM. It installs no LSA package. The user
+The actual unlock build now contains credential serialization, but is uninstalled;
+its signed installer refuses physical machines pending those acceptance checks.
+First login after restart still requires PIN/password; MSA profile/DPAPI compatibility
+is unproven. The separate preview installer only adds an approval-test tile in a
+disposable VM and installs no LSA package. The user
 explicitly chose continued development without installation on 2026-10-04. No VM,
 service, provider, machine enrollment or signing certificate was installed for this work.
 

@@ -2,11 +2,18 @@
 #include "storage.hpp"
 #include <mutex>
 #include <thread>
+#include <condition_variable>
 namespace pu::preview {
 class Broker {
   Json config_;bool configured_{};std::mutex mutex_;native::Request current_{};native::Caller owner_{};
   native::State state_{native::State::Unavailable};std::jthread worker_;std::atomic<bool> cancelled_{false},workerActive_{false};
   std::chrono::steady_clock::time_point nextAllowed_{},deadline_{};
+#ifdef PU_WINDOWS_UNLOCK
+  std::string authorityRequestId_,proof_;
+  std::mutex revokeMutex_;std::condition_variable revokeReady_;
+  std::vector<std::pair<std::string,DWORD>> revocations_;bool stopping_{};std::jthread revoker_;
+  void queueRevoke(const std::string&,DWORD) noexcept;
+#endif
   bool same(const native::Request&,const native::Caller&) const;
   void set(native::State);
   void run(native::Request,native::Caller);

@@ -6,4 +6,7 @@ std::filesystem::path directory();
 Json configuration();
 void stage(const std::filesystem::path& desktopConfig);
 void validateConfiguration(const Json& config);
+#ifdef PU_WINDOWS_UNLOCK
+Json publicTrust();
+#endif
 }

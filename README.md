@@ -1,8 +1,11 @@
 # WINDOWS-UNLOCK for Windows 11
 
 The prototype includes a native Windows desktop/tray companion, an Android 11+
-application, and a deployable TypeScript/PostgreSQL HTTPS relay. It proves phone-authorized signatures;
-**it does not unlock Windows or change any Windows sign-in configuration**.
+application, and a deployable TypeScript/PostgreSQL HTTPS relay. Version 0.3 also
+implements a separate native LSA authentication package, Credential Provider and
+LocalSystem service for phone-approved **existing console session unlock**.
+**These native components are uninstalled and Windows/Winlogon acceptance is not
+yet validated. This laptop still requires normal Windows PIN/password.**
 
 Start with [setup](docs/setup.md), [protocol](protocol/authentication-spec.md),
 [architecture](docs/architecture.md), and [recovery](docs/recovery.md).
@@ -13,14 +16,23 @@ runtime; run `scripts/Start-Local.ps1` to start the relay/database and desktop a
 
 Windows Hello PIN and password remain independent recovery methods. No Windows
 password, Windows PIN, biometric template, or private Android key is transmitted.
-No Credential Provider or LSA package is installed in this phase.
+No Credential Provider or LSA package has been installed on this laptop.
 
-Native development now includes a compiled V2 Credential Provider, LocalSystem
+The older native preview includes a compiled V2 Credential Provider, LocalSystem
 approval-preview service, restricted IPC, protected enrollment staging, and a
 disposable-VM-only installer. The DLL always returns **no Windows credential**,
 including after valid phone approval. Run `scripts/Build-NativePreview.ps1` to build
 without installing anything. See [native development](docs/native-development.md)
-and [native verification](docs/native-verification.md) for tested behavior and remaining gates.
+and [native verification](docs/native-verification.md) for that preview's tested behavior.
+
+The actual unlock targets are `WindowsUnlockAuth.dll`, `CredentialProvider.dll`,
+`PhoneUnlockService.exe` and `PhoneUnlockStage.exe`. Run
+`scripts/Build-WindowsUnlock.ps1` to build them without installing. Follow
+[LSA signing and setup](docs/lsa-signing-and-setup.md) for the EV certificate,
+organization/Partner Center registration, Microsoft submission, signed VM installer
+and independent recovery tests. See [implementation and validation](docs/lsa-verification.md).
+Signing alone does not establish personal Microsoft-account compatibility.
+First sign-in after a reboot remains PIN/password; cold-boot phone login is not implemented.
 
 The desktop companion can optionally send a test approval prompt when the current
 Windows session locks, including while it runs in the tray. Enable its explicit

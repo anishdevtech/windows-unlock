@@ -34,9 +34,17 @@ Never transmit biometric data, phone screen credentials, Windows PIN/password, o
 Android private keys. Android backup is disabled for pairing configuration. Key loss
 requires explicit pairing again. Reinstalling must not silently trust backend keys.
 
-Future sign-in: bind approval to Windows account, session, usage scenario and selected
-tile; do not reuse desktop-demo signatures. Validate locally inside the authentication
-boundary, rather than accepting a service Boolean. Keep all Microsoft providers.
+Version 0.3 implements that sign-in boundary in a separate LSA package: approval is
+bound to account SID, active locked console session, usage scenario, existing logon
+LUID and the selected LogonUI process ID/creation time. LSA creates/consumes the nonce
+and independently checks public trust and both signatures; a service Boolean cannot
+authorize. Desktop-demo signatures have a different purpose and are rejected. The
+SSP/AP rejects ordinary/restricted/impersonating callers and unsupported logon types.
+Token information comes from the existing Windows-authenticated user context; no
+invented administrator groups/privileges or broad default DACL. The installer appends
+only the owned Security Packages entry and provider GUID, preserves built-in methods,
+requires signed binaries and currently refuses physical machines. Actual protected-LSA
+loading, Winlogon acceptance, MSA/DPAPI continuity and crash recovery still need VM proof.
 
 Native-preview trust is frozen in machine-DPAPI enrollment with SYSTEM/Administrators
 ACLs and ownership checks. Null/broad ACLs and reparse files/directories fail closed.
@@ -52,6 +60,18 @@ system or cold-boot sign-in solution. Remove the staged VM enrollment and stop t
 preview service before unpairing/replacing the desktop identity. A compromised relay
 can hide revocation; production revocation must be enforced locally at the eventual
 authentication boundary. Approval status must never be treated as an LSA credential.
+
+For the unlock build, local removal/replacement of protected `trust.json` revokes
+pending approvals even if the relay is offline or conceals its pairing state. Stop
+the broker before unpairing; remove both native trust and DPAPI enrollment, then pair
+and stage again explicitly. The relay has no authority to update native trust. Android
+hardware checks remain client-enforced; independent attestation/application validation
+is not implemented. Do not describe this prototype as resistant to an already trusted,
+dishonest enrolled phone. First login after reboot and domain/Entra/network logons are
+outside the implemented path. There is no LAN fallback yet; use Windows PIN when the
+relay is unavailable. Every Windows failure must produce no credential and leave other
+providers available. Absolute recovery from arbitrary OS/firmware failures is not a
+promise this project can make.
 
 Production requires independent key-attestation chain/revocation/application-identity
 verification; trusted roots must account for Android root rotation. A compromised

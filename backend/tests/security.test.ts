@@ -49,6 +49,17 @@ test('denial uses identity key; that key cannot approve',async t=>{
   assert.equal((await f.call('POST',url,f.at,{responseJws:await f.response(r,'approve',{},f.identity)})).statusCode,400);
   assert.equal((await f.call('POST',url,f.at,{responseJws:await f.response(r,'deny')})).statusCode,200);
 });
+test('Windows unlock purpose binds session and rejects desktop approval substitution',async t=>{
+  const f=await fixture(t),r=await f.challenge({purpose:'windows-unlock',windowsAccountSid:'S-1-5-21-1-2-3-1001',sessionId:1,usageScenario:1,existingLogonId:'0000000000001234'});
+  assert.equal((await r.send()).statusCode,200);const url=`/v1/authentication-requests/${r.p.requestId}/responses`;
+  assert.equal((await f.call('POST',url,f.at,{responseJws:await f.response(r)})).statusCode,400);
+  assert.equal((await f.call('POST',url,f.at,{responseJws:await f.response(r,'approve',{purpose:'windows-unlock'})})).statusCode,200);
+});
+test('Windows unlock requests require exact account/session context',async t=>{
+  const f=await fixture(t);
+  for(const bad of [{},{windowsAccountSid:'S-1-5-18',sessionId:1,usageScenario:1,existingLogonId:'0000000000001234'},{windowsAccountSid:'S-1-5-21-1-2-3-1001',sessionId:0,usageScenario:1,existingLogonId:'0000000000001234'}])
+    assert.equal((await (await f.challenge({purpose:'windows-unlock',...bad})).send()).statusCode,400);
+});
 test('wrong binding and fake signature cannot consume pending request',async t=>{
   const f=await fixture(t),r=await f.challenge();await r.send();const url=`/v1/authentication-requests/${r.p.requestId}/responses`;
   for(const override of [{challengeHash:'0'.repeat(64)},{requestId:randomUUID()},{androidDeviceId:randomUUID()},{pairingId:randomUUID()},{purpose:'windows-logon'}])

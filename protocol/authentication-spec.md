@@ -7,7 +7,7 @@ transcoder. Windows signs SHA256(JWS signing input) with NCrypt, verifies with B
 Reject other algorithms, key URLs, critical header extensions, duplicate JSON keys,
 oversized input (64 KiB), invalid encoding and nesting deeper than 16.
 
-Common signed fields: v=1, type, purpose=desktop-approval. IDs are UUIDs. Epoch timestamps
+Common signed fields: v=1, type, purpose=desktop-approval or windows-unlock. IDs are UUIDs. Epoch timestamps
 are integer seconds UTC. 30-second skew is allowed, but never extends Windows's local
 60-second steady-clock deadline. No canonical JSON requirement: verify exact received
 JWS bytes; digest references are lowercase SHA256 hexadecimal over the entire JWS.
@@ -67,8 +67,49 @@ DB states distinguish pending/response_received/cancelled; client verification o
 are recorded separately. Duplicate terminal submissions return 409; expired work 410;
 unauthorized callers 401/403. Request bodies/messages <=64 KiB and rate-limited.
 
-Future windows-logon purpose and account/session/usage binding are a separate protocol
-revision. Desktop approvals must never be accepted as Windows logon credentials.
+## Native Windows unlock (v0.3)
+
+`purpose=windows-unlock` is permitted only for `auth-request` and `auth-response`.
+All pairing, push, cancellation, remote control and event message purposes stay
+`desktop-approval`. The response must match the request purpose exactly.
+Desktop approvals never become Windows credentials.
+
+The LSA authority generates the nonce and all 15 request fields: the usual 11 fields
+(including v/type/purpose) plus `windowsAccountSid`, `sessionId`, `usageScenario`
+(1=CPUS_LOGON, 2=CPUS_UNLOCK_WORKSTATION) and `existingLogonId` (16 lowercase hex digits
+of the existing OS authentication LUID). CPUS_LOGON on Windows 11 can still represent
+unlocking an existing session; this implementation always requires a previously
+authenticated, locked local console session. A real first login is refused.
+
+Only the registered LocalSystem broker can ask LSA to begin/cancel a lease. Its
+kernel-reported process ID and privilege are checked; ordinary users cannot create
+leases through LsaCallAuthenticationPackage. The service signs the immutable LSA
+challenge with the paired user's CNG key and relays it over HTTPS. Android verifies
+the pinned Windows key, pairing, purpose and context before BiometricPrompt. It signs
+the exact JWS digest with the per-use approval key; a transport token/identity key
+cannot approve. Software-key test builds refuse the unlock purpose.
+
+The provider submits bounded pointer-free JSON `{v,requestId,requestJws,responseJws}`
+to the WINDOWS-UNLOCK package ID, not Negotiate, after selected-tile approval. In LSA,
+both signatures are independently verified against public-only protected local trust;
+the challenge must equal the exact in-memory lease generated inside LSA. Live account
+SID, active console, locked state, usage scenario, existing logon LUID, original
+LogonUI process ID and creation time must still match. Replaced enrollment, expired
+requests, unknown/nonpending nonces, Deny, a different challenge or replay all fail.
+
+LSA atomically removes an accepted lease before allocating token information. It
+returns OS-derived account/group/default-DACL information to Windows, rather than
+inventing memberships or storing a Windows password. Only actual SYSTEM Winlogon or
+LogonUI in the bound console session may submit. Network/batch/service logons are
+refused. LSA restart drops all leases. Service cancellation, session change, tile
+deselection, local trust removal and the independent 60-second monotonic deadline
+revoke pending work. Teardown after serialization leaves Windows its submitted proof
+to consume once; it does not race a cancellation against Winlogon.
+
+The service logs `phone_proof_verified` separately from Windows' LSA sign-in audit.
+Relay or IPC status is never proof Windows completed an unlock. This is implemented
+code awaiting Microsoft-signed, protected-LSA/Winlogon VM acceptance, including
+Microsoft-account profile/DPAPI behavior. See [setup](../docs/lsa-signing-and-setup.md).
 
 ## Background notification delivery (v0.2)
 

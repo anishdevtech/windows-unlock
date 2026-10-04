@@ -42,7 +42,7 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
   };
   const pairing = async (id: string, s=store) => { requireThat(uuid(id)); const p=await s.get('device_pairings',id); requireThat(p?.active,'not_paired',403); return p; };
   app.get('/',async (_req,reply)=>reply.redirect('/health'));
-  app.get('/health', async()=>({status:'ok',mode:'desktop-approval-only'}));
+  app.get('/health', async()=>({status:'ok',mode:'approval-relay',protocolPurposes:['desktop-approval','windows-unlock']}));
   app.post('/v1/pairing-sessions', async req => store.transaction(async s=> {
     const w=await device(req,'windows',s); const b=req.body as any; const p=await verified(b.invitationJws,w.jwk,'pair-invitation');
     fields(p,['sessionId','windowsDeviceId','windowsName','nonce','issuedAt','expiresAt']); lifetime(p,300);
@@ -83,7 +83,9 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
   app.post('/v1/authentication-requests', async req=> {
     const result=await store.transaction(async s=> {
     const w=await device(req,'windows',s); const jws=(req.body as any).requestJws; const p=await verified(jws,w.jwk,'auth-request');
-    fields(p,['requestId','windowsDeviceId','androidDeviceId','pairingId','accountBindingId','nonce','issuedAt','expiresAt']); lifetime(p,60);
+    const unlock=p.purpose==='windows-unlock';
+    fields(p,['requestId','windowsDeviceId','androidDeviceId','pairingId','accountBindingId','nonce','issuedAt','expiresAt',...(unlock?['windowsAccountSid','sessionId','usageScenario','existingLogonId']:[])]); lifetime(p,60);
+    if(unlock)requireThat(typeof p.windowsAccountSid==='string'&&/^S-1-5-21-\d+-\d+-\d+-\d+$/.test(p.windowsAccountSid)&&Number.isInteger(p.sessionId)&&p.sessionId>0&&[1,2].includes(p.usageScenario)&&typeof p.existingLogonId==='string'&&/^[0-9a-f]{16}$/.test(p.existingLogonId),'invalid_unlock_context');
     requireThat(uuid(p.requestId) && uuid(p.androidDeviceId) && uuid(p.accountBindingId)); const pair=await pairing(p.pairingId,s);
     requireThat(p.windowsDeviceId===w.id && pair.windowsDeviceId===w.id && pair.androidDeviceId===p.androidDeviceId,'forbidden',403);
     requireThat(!(await s.find('authentication_requests','nonce',p.nonce)).length,'nonce_reused',409);
@@ -113,7 +115,7 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
     await pairing(r.pairingId,s); const jws=(req.body as any).responseJws; const raw=decode(jws); requireThat(raw.decision==='approve'||raw.decision==='deny');
     const p=await verified(jws,raw.decision==='approve'?phone.approvalJwk:phone.identityJwk,'auth-response');
     fields(p,['requestId','pairingId','windowsDeviceId','androidDeviceId','challengeHash','decision']);
-    requireThat(p.requestId===id&&p.pairingId===r.pairingId&&p.windowsDeviceId===r.windowsDeviceId&&p.androidDeviceId===phone.id&&p.challengeHash===hash(r.requestJws),'binding_mismatch');
+    requireThat(p.purpose===r.purpose&&p.requestId===id&&p.pairingId===r.pairingId&&p.windowsDeviceId===r.windowsDeviceId&&p.androidDeviceId===phone.id&&p.challengeHash===hash(r.requestJws),'binding_mismatch');
     r.responseJws=jws; r.state='response_received'; await s.put('authentication_requests',id,r); return {state:'response_received'};
   }));
   app.post('/v1/authentication-requests/:id/cancel', async req=>store.transaction(async s=> {

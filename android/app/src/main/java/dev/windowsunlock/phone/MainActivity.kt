@@ -87,7 +87,7 @@ class MainActivity : FragmentActivity() {
                         Card { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("Windows Login Request", style = MaterialTheme.typography.titleLarge)
                             Text("Device: $pairedName\nTime: ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(r.getLong("issuedAt") * 1000))}\nExpires in $remaining seconds")
-                            Text("Someone is requesting access to your computer. This Phase 1 request tests approval only.")
+                            Text(if (r.getString("purpose") == "windows-unlock") "Someone is requesting access to your computer. Approval authorizes unlocking its existing Windows session." else "This request tests phone approval only; it cannot unlock Windows.")
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Button(onClick = { approve() }, enabled = remaining > 0 && !working) { Text("Approve") }
                                 OutlinedButton(onClick = { deny() }, enabled = remaining > 0 && !working) { Text("Deny") }
@@ -175,7 +175,10 @@ class MainActivity : FragmentActivity() {
         if (!r.has("requestJws")) { request = null; return }
         val token = r.getString("requestJws"); val p = Protocol.verify(token, c.getJSONObject("windowsJwk"), "auth-request"); Protocol.lifetime(p, 60)
         val invite = Protocol.decode(c.getString("invitationJws"))
-        require(p.length() == 11 && p.getString("windowsDeviceId") == invite.getString("windowsDeviceId") && p.getString("androidDeviceId") == c.getString("androidDeviceId") && p.getString("pairingId") == c.getString("pairingId"))
+        val unlock = p.getString("purpose") == "windows-unlock"
+        if (unlock) require(!BuildConfig.ALLOW_SOFTWARE_KEYS)
+        require(p.length() == (if (unlock) 15 else 11) && p.getString("windowsDeviceId") == invite.getString("windowsDeviceId") && p.getString("androidDeviceId") == c.getString("androidDeviceId") && p.getString("pairingId") == c.getString("pairingId"))
+        if (unlock) require(p.getString("windowsAccountSid").matches(Regex("S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+")) && p.getInt("sessionId") > 0 && p.getInt("usageScenario") in 1..2 && p.getString("existingLogonId").matches(Regex("[0-9a-f]{16}")))
         requestToken = token; request = p; status = "Review this request before approving."
         notificationRequestId?.let { id -> if (id == p.getString("requestId")) {
             notificationRequestId = null
@@ -183,7 +186,7 @@ class MainActivity : FragmentActivity() {
             // Notification tap shows the verified request. Approve still requires an explicit button press.
         } }
     }
-    private fun response(r: JSONObject, token: String, decision: String): JSONObject = Protocol.message("auth-response")
+    private fun response(r: JSONObject, token: String, decision: String): JSONObject = Protocol.message("auth-response", r.getString("purpose"))
         .put("requestId", r.getString("requestId")).put("pairingId", r.getString("pairingId")).put("windowsDeviceId", r.getString("windowsDeviceId"))
         .put("androidDeviceId", r.getString("androidDeviceId")).put("challengeHash", Protocol.hash(token)).put("decision", decision)
     private fun approve() {

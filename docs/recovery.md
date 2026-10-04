@@ -28,3 +28,18 @@ physical machines. In a disposable VM, the preview tile can request phone approv
 cannot sign in. Use normal Windows sign-in options. See [native development](native-development.md)
 for VM-only uninstall and recovery of the project's own registration. Retain a known
 Windows password and a VM checkpoint; PIN is not guaranteed in Safe Mode/recovery.
+
+The separate v0.3 actual-unlock installer also refuses physical machines and requires
+a Microsoft-signed authentication DLL plus publisher-signed components. Its Register
+phase adds only `WindowsUnlockAuth` to LSA's current Security Packages multi-string;
+the existing list is preserved. Its Activate phase runs only after reboot/package
+lookup and adds only the project's provider/LocalSystem service. No exclusions,
+default-provider replacement, password/PIN storage or automatic reboot is used.
+
+For the owned native installation, run elevated `windows/installer/Uninstall-Unlock.ps1`
+with `-RemoveEnrollment` to revoke native trust and remove the project's tile, service
+and LSA list entry. Only fixed owned files are deleted. Loaded files remain with an
+ownership marker; manually reboot, sign in with Windows PIN/password and rerun cleanup.
+Do not force-delete LSASS/LogonUI or change protected-LSA policy. A VM unable to boot
+must be restored from its pre-install checkpoint. [Signing and setup](lsa-signing-and-setup.md)
+contains the required recovery/acceptance checklist before physical deployment.

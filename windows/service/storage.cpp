@@ -26,11 +26,21 @@ bool isUuid(const Json& value){if(!value.is_string())return false;const auto& s=
 // Preserve ACLs atomically; never follow an operator-created symlink or overwrite enrollment.
 void createProtected(const std::filesystem::path& path,const Bytes& bytes){auto sd=descriptor();SECURITY_ATTRIBUTES sa{sizeof(sa),sd.value,FALSE};Handle file(CreateFileW(path.c_str(),GENERIC_WRITE|READ_CONTROL,0,&sa,CREATE_NEW,FILE_FLAG_OPEN_REPARSE_POINT,nullptr));require(bool(file),"Enrollment already exists or write unavailable");checkAcl(file.get());DWORD count{};require(bytes.size()<=65536&&WriteFile(file.get(),bytes.data(),DWORD(bytes.size()),&count,nullptr)&&count==bytes.size()&&FlushFileBuffers(file.get()),"Enrollment commit failed");}
 }
-std::filesystem::path directory(){PWSTR raw{};require(SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramData,KF_FLAG_DEFAULT,nullptr,&raw)),"ProgramData unavailable");auto result=std::filesystem::path(raw)/L"WINDOWS-UNLOCK-ApprovalPreview";CoTaskMemFree(raw);return result;}
+std::filesystem::path directory(){PWSTR raw{};require(SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramData,KF_FLAG_DEFAULT,nullptr,&raw)),"ProgramData unavailable");
+#ifdef PU_WINDOWS_UNLOCK
+  auto result=std::filesystem::path(raw)/L"WINDOWS-UNLOCK-SignIn";
+#else
+  auto result=std::filesystem::path(raw)/L"WINDOWS-UNLOCK-ApprovalPreview";
+#endif
+  CoTaskMemFree(raw);return result;}
 void validateConfiguration(const Json& c){
   std::set<std::string> fields{"mode","windowsSignInEnabled","sid","id","name","accountBindingId","relayUrl","tlsPin","transportToken","pairing","windowsJwk"};
   require(c.is_object()&&c.size()==fields.size(),"Unexpected enrollment fields");for(const auto& item:c.items())require(fields.erase(item.key())==1,"Unexpected enrollment field");
-  require(c.size()==11&&c.at("mode")=="approval-preview"&&c.at("windowsSignInEnabled")==false,"Windows sign-in must remain disabled");
+#ifdef PU_WINDOWS_UNLOCK
+  require(c.at("mode")=="windows-unlock"&&c.at("windowsSignInEnabled")==true,"Invalid sign-in enrollment mode");
+#else
+  require(c.at("mode")=="approval-preview"&&c.at("windowsSignInEnabled")==false,"Windows sign-in must remain disabled");
+#endif
   require(validSid(wide(c.at("sid")))&&unb64url(c.at("transportToken")).size()==32,"Invalid account or transport enrollment");
   require(isUuid(c.at("id")),"Invalid key identity");
   require(c.at("name").is_string()&&c.at("name").get<std::string>().size()<=320&&isUuid(c.at("accountBindingId")),"Invalid enrollment binding");
@@ -49,9 +59,18 @@ void stage(const std::filesystem::path& source){
   BOOL member{};BYTE adminBuffer[SECURITY_MAX_SID_SIZE];DWORD adminSize=sizeof(adminBuffer);require(CreateWellKnownSid(WinBuiltinAdministratorsSid,nullptr,adminBuffer,&adminSize)&&CheckTokenMembership(nullptr,adminBuffer,&member)&&member,"Elevated administrator required to stage preview enrollment");
   const auto c=load(source);SigningKey key(c.at("id")); // Same Windows account as the desktop pairing.
   Json result{{"mode","approval-preview"},{"windowsSignInEnabled",false},{"sid",utf8(currentSid())},{"id",c.at("id")},{"name",c.at("name")},{"accountBindingId",c.at("accountBindingId")},{"relayUrl",c.at("relayUrl")},{"tlsPin",c.at("tlsPin")},{"transportToken",c.at("transportToken")},{"pairing",c.at("pairing")},{"windowsJwk",key.jwk()}};
+#ifdef PU_WINDOWS_UNLOCK
+  result["mode"]="windows-unlock";result["windowsSignInEnabled"]=true;
+#endif
   validateConfiguration(result);auto root=directory();auto sd=descriptor();SECURITY_ATTRIBUTES sa{sizeof(sa),sd.value,FALSE};
   if(!CreateDirectoryW(root.c_str(),&sa))require(GetLastError()==ERROR_ALREADY_EXISTS,"Preview directory unavailable");auto parent=openProtected(root,FILE_READ_ATTRIBUTES);
   auto text=result.dump();DATA_BLOB input{DWORD(text.size()),reinterpret_cast<BYTE*>(text.data())},encrypted{};require(CryptProtectData(&input,L"WINDOWS-UNLOCK approval preview enrollment",nullptr,nullptr,nullptr,CRYPTPROTECT_LOCAL_MACHINE|CRYPTPROTECT_UI_FORBIDDEN,&encrypted)!=FALSE,"Machine DPAPI unavailable");
   Bytes bytes(encrypted.pbData,encrypted.pbData+encrypted.cbData);LocalFree(encrypted.pbData);SecureZeroMemory(text.data(),text.size());createProtected(root/L"enrollment.dpapi",bytes);
+#ifdef PU_WINDOWS_UNLOCK
+  Json trust{{"v",1},{"mode","windows-unlock"},{"sid",result.at("sid")},{"id",result.at("id")},{"accountBindingId",result.at("accountBindingId")},{"pairing",result.at("pairing")},{"windowsJwk",result.at("windowsJwk")}};const auto publicText=trust.dump();createProtected(root/L"trust.json",Bytes(publicText.begin(),publicText.end()));
+#endif
 }
+#ifdef PU_WINDOWS_UNLOCK
+Json publicTrust(){auto root=directory();auto parent=openProtected(root,FILE_READ_ATTRIBUTES);auto file=openProtected(root/L"trust.json",GENERIC_READ);LARGE_INTEGER size{};require(GetFileSizeEx(file.get(),&size)&&size.QuadPart>0&&size.QuadPart<=8192,"Invalid trust length");Bytes data(size_t(size.QuadPart));DWORD read{};require(ReadFile(file.get(),data.data(),DWORD(data.size()),&read,nullptr)&&read==data.size(),"Trust read failed");auto j=parse(std::string(data.begin(),data.end()));require(j.size()==7&&j.at("v")==1&&j.at("mode")=="windows-unlock"&&validSid(wide(j.at("sid")))&&isUuid(j.at("id"))&&isUuid(j.at("accountBindingId")),"Invalid authority enrollment");auto pair=j.at("pairing");require(pair.size()==5&&isUuid(pair.at("id"))&&isUuid(pair.at("androidDeviceId"))&&pair.at("phoneName").is_string(),"Invalid authority pairing");publicJwk(j.at("windowsJwk"));publicJwk(pair.at("approvalJwk"));publicJwk(pair.at("identityJwk"));return j;}
+#endif
 }

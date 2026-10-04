@@ -41,6 +41,8 @@ performed by a build or test.
 | Actual SSP/AP ordinary-process DLL harness | Passed: actual exports/table initialization, restricted caller rejection, empty authentication-failure outputs and no session creation |
 | Actual provider ordinary-process fallback COM harness | Passed: no provider filter/default/autologon without a verified response, visible PIN fallback, bounded empty serialization, callbacks on UI thread, teardown |
 | New PowerShell scripts | Parsed without errors; physical-machine installer guard exercised with WhatIf and refused before mutation |
+| Cabinet packaging | MakeCab/Expand verified a flat unsigned CAB containing only WindowsUnlockAuth.dll; not signed or submitted |
+| Hosted relay after source push | HTTP 200; approval-relay advertises desktop-approval and windows-unlock purposes |
 
 CTest finished with **6 passed and 1 not run**. `core_security` could not launch;
 Code Integrity event 3077 recorded policy `VerifiedAndReputableDesktop` for

@@ -1,5 +1,8 @@
 # Architecture and exact stack
 
+> Current 0.5 phone sign-in uses a locally encrypted password vault and built-in Windows authentication. See [one-time setup](password-unlock-setup.md) and [vault protocol](../protocol/password-vault-spec.md). Earlier no-password LSA/preview descriptions below refer to those separate modes.
+
+
 ## Phase 1
 
 Native Win32 desktop UI -> reusable C++ authentication core -> HTTPS relay -> open

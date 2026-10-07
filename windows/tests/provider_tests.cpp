@@ -44,6 +44,9 @@ struct Events final:ICredentialProviderCredentialEvents {
   HRESULT STDMETHODCALLTYPE OnCreatingWindow(HWND* out)override{if(!out)return E_POINTER;*out=nullptr;return S_OK;}
 };
 int wmain(int argc,wchar_t** argv){try{
+  // Loader failures must fail the test without opening an unattended modal dialog.
+  // This only changes error presentation; Windows still enforces its integrity policy.
+  SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);
   check(argc==2,"Provider DLL path required");check(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
   auto path=std::filesystem::absolute(argv[1]);HMODULE dll=LoadLibraryExW(path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);check(dll!=nullptr,"Provider DLL loading failed (check Application Control)");
   auto factoryEntry=reinterpret_cast<HRESULT(WINAPI*)(REFCLSID,REFIID,void**)>(GetProcAddress(dll,"DllGetClassObject"));auto unload=reinterpret_cast<HRESULT(WINAPI*)()>(GetProcAddress(dll,"DllCanUnloadNow"));check(factoryEntry&&unload,"COM exports missing");

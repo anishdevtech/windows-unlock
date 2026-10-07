@@ -1,5 +1,8 @@
 # One-time hosted Windows setup
 
+> Current 0.5 phone sign-in uses a locally encrypted password vault and built-in Windows authentication. See [one-time setup](password-unlock-setup.md) and [vault protocol](../protocol/password-vault-spec.md). Earlier no-password LSA/preview descriptions below refer to those separate modes.
+
+
 The server must first return `status: ok` at https://windows-unlock.vercel.app/health.
 The hosted database migrations are already applied for this development installation.
 This procedure configures the desktop companion; it does not install a Credential

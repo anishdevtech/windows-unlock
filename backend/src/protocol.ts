@@ -68,7 +68,7 @@ export async function verified(token: string, jwk: any, type: string): Promise<R
   const p = decode(token); publicKey(jwk);
   try { await compactVerify(token, await importJWK(jwk, 'ES256'), { algorithms: ['ES256'] }); }
   catch { throw new ApiError(400, 'invalid_signature'); }
-  const purposeAllowed=p.purpose==='desktop-approval'||(p.purpose==='windows-unlock'&&['auth-request','auth-response'].includes(type));
+  const purposeAllowed=p.purpose==='desktop-approval'||(p.purpose==='windows-unlock'&&['auth-request','auth-response'].includes(type))||(p.purpose==='password-unlock'&&['vault-delegation','vault-enroll','vault-enrolled','vault-unlock','vault-response','vault-cancel','diagnostic-batch'].includes(type));
   requireThat(p.v === 1 && purposeAllowed && p.type === type, 'invalid_purpose');
   return p;
 }

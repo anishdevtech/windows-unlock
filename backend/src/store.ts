@@ -1,5 +1,5 @@
 import { Pool, type PoolClient } from 'pg';
-export type Table = 'users' | 'windows_devices' | 'android_devices' | 'device_pairings' | 'pairing_sessions' | 'authentication_requests' | 'authentication_events' | 'remote_offers' | 'remote_commands' | 'camera_frames' | 'rate_limits' | 'diagnostic_logs';
+export type Table = 'users' | 'windows_devices' | 'android_devices' | 'device_pairings' | 'pairing_sessions' | 'authentication_requests' | 'authentication_events' | 'remote_offers' | 'remote_commands' | 'camera_frames' | 'rate_limits' | 'diagnostic_logs' | 'vault_requests';
 export type Row = Record<string, any>;
 export interface Store {
   get(table: Table, id: string): Promise<Row | undefined>;

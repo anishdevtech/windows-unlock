@@ -1,0 +1,28 @@
+#include "storage.hpp"
+#include "ipc.hpp"
+#include <shlobj.h>
+#include <sddl.h>
+#include <aclapi.h>
+#include <wincrypt.h>
+#include <objbase.h>
+#include <algorithm>
+namespace pu::vault {
+using namespace native;
+namespace {
+struct Local {void* p{};~Local(){if(p)LocalFree(p);}};
+void check(HANDLE file){PSID owner{};PACL acl{};PSECURITY_DESCRIPTOR sd{};require(GetSecurityInfo(file,SE_FILE_OBJECT,OWNER_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&owner,nullptr,&acl,nullptr,&sd)==0,"Vault ACL unavailable");Local cleanup{sd};
+  auto trusted=[](PSID sid){Local text;return ConvertSidToStringSidW(sid,reinterpret_cast<LPWSTR*>(&text.p))&&(std::wstring(static_cast<wchar_t*>(text.p))==L"S-1-5-18"||std::wstring(static_cast<wchar_t*>(text.p))==L"S-1-5-32-544");};
+  SECURITY_DESCRIPTOR_CONTROL control{};DWORD revision{};require(GetSecurityDescriptorControl(sd,&control,&revision)&&(control&SE_DACL_PROTECTED)&&trusted(owner)&&acl&&acl->AceCount>0&&acl->AceCount<=4,"Untrusted vault owner or ACL");
+  for(DWORD i=0;i<acl->AceCount;i++){void* raw{};require(GetAce(acl,i,&raw)&&static_cast<ACE_HEADER*>(raw)->AceType==ACCESS_ALLOWED_ACE_TYPE&&trusted(&static_cast<ACCESS_ALLOWED_ACE*>(raw)->SidStart),"Vault grants nonprivileged access");}
+  FILE_ATTRIBUTE_TAG_INFO info{};require(GetFileInformationByHandleEx(file,FileAttributeTagInfo,&info,sizeof(info))&&!(info.FileAttributes&FILE_ATTRIBUTE_REPARSE_POINT),"Reparse vault refused");
+}
+Handle checked(const std::filesystem::path& path,DWORD access){Handle f(CreateFileW(path.c_str(),access|READ_CONTROL,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr));require(bool(f),"Vault unavailable");check(f.get());return f;}
+}
+std::filesystem::path directory(){PWSTR raw{};require(SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramData,0,nullptr,&raw)),"ProgramData unavailable");auto p=std::filesystem::path(raw)/L"WINDOWS-UNLOCK-Password";CoTaskMemFree(raw);return p;}
+void validate(const Json& c){require(c.size()==11&&c.at("v")==1&&c.at("serverDiagnosticsEnabled").is_boolean(),"Invalid vault configuration");auto d=verify(c.at("delegationJws"),c.at("windowsJwk"),"vault-delegation","password-unlock");require(d.size()==11&&validSid(wide(d.at("windowsAccountSid")))&&d.at("windowsAccountSid").get<std::string>().starts_with("S-1-5-21-")&&d.at("loginName").is_string(),"Invalid vault delegation");auto login=wide(d.at("loginName"));require(!login.empty()&&login.size()<=256&&std::none_of(login.begin(),login.end(),[](wchar_t c){return c<32;}),"Invalid account name");for(const char* field:{"vaultId","windowsDeviceId","androidDeviceId","pairingId","accountBindingId"}){GUID id{};require(SUCCEEDED(CLSIDFromString((L"{"+wide(d.at(field))+L"}").c_str(),&id))&&!IsEqualGUID(id,GUID{}),"Invalid vault identity");}publicJwk(d.at("machineJwk"));publicJwk(c.at("phoneIdentityJwk"));rsaPublic(c.at("phoneJwk"));require(unb64url(c.at("wrappedKey")).size()==256,"Invalid wrapped vault key");auto envelope=c.at("envelope");auto ciphertext=unb64url(envelope.at("ciphertext"));require(envelope.size()==3&&unb64url(envelope.at("iv")).size()==12&&unb64url(envelope.at("tag")).size()==16&&ciphertext.size()>=2&&ciphertext.size()<=512&&ciphertext.size()%2==0,"Invalid password ciphertext");Http(c.at("relayUrl"),c.at("tlsPin"),c.at("transportToken"));}
+Json configuration(){auto root=checked(directory(),FILE_READ_ATTRIBUTES);auto f=checked(directory()/L"vault.dpapi",GENERIC_READ);LARGE_INTEGER size{};require(GetFileSizeEx(f.get(),&size)&&size.QuadPart>0&&size.QuadPart<=65536,"Invalid vault size");Bytes b(size_t(size.QuadPart));DWORD read{};require(ReadFile(f.get(),b.data(),DWORD(b.size()),&read,nullptr)&&read==b.size(),"Vault read failed");DATA_BLOB input{DWORD(b.size()),b.data()},plain{};require(CryptUnprotectData(&input,nullptr,nullptr,nullptr,nullptr,CRYPTPROTECT_UI_FORBIDDEN,&plain),"Vault DPAPI unavailable");Local memory{plain.pbData};Secret text(Bytes(plain.pbData,plain.pbData+plain.cbData));SecureZeroMemory(plain.pbData,plain.cbData);auto c=parse(std::string(text.bytes.begin(),text.bytes.end()));validate(c);return c;}
+void store(const Json& c){validate(c);Local sd;require(ConvertStringSecurityDescriptorToSecurityDescriptorW(L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)",SDDL_REVISION_1,reinterpret_cast<PSECURITY_DESCRIPTOR*>(&sd.p),nullptr),"Vault ACL failed");SECURITY_ATTRIBUTES sa{sizeof(sa),sd.p,FALSE};auto path=directory();if(!CreateDirectoryW(path.c_str(),&sa))require(GetLastError()==ERROR_ALREADY_EXISTS,"Vault directory failed");auto root=checked(path,FILE_READ_ATTRIBUTES);auto target=path/L"vault.dpapi";if(std::filesystem::exists(target)){auto previous=checked(target,FILE_READ_ATTRIBUTES);}
+  auto text=c.dump();DATA_BLOB input{DWORD(text.size()),reinterpret_cast<BYTE*>(text.data())},blob{};auto result=CryptProtectData(&input,L"WINDOWS-UNLOCK phone-controlled password ciphertext",nullptr,nullptr,nullptr,CRYPTPROTECT_LOCAL_MACHINE|CRYPTPROTECT_UI_FORBIDDEN,&blob);SecureZeroMemory(text.data(),text.size());require(result,"Vault protection failed");Local memory{blob.pbData};auto temporary=path/wide("vault-"+uuid()+".tmp");
+  try{{Handle f(CreateFileW(temporary.c_str(),GENERIC_WRITE|READ_CONTROL,0,&sa,CREATE_NEW,FILE_FLAG_OPEN_REPARSE_POINT,nullptr));require(bool(f),"Vault commit failed");check(f.get());DWORD written{};require(WriteFile(f.get(),blob.pbData,blob.cbData,&written,nullptr)&&written==blob.cbData&&FlushFileBuffers(f.get()),"Vault commit failed");}require(MoveFileExW(temporary.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH),"Vault commit failed");}catch(...){DeleteFileW(temporary.c_str());throw;}
+}
+}

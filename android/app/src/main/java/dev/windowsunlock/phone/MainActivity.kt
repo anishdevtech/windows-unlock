@@ -38,6 +38,8 @@ class MainActivity : FragmentActivity() {
     private var working by mutableStateOf(false)
     private var prompt: BiometricPrompt? = null
     private var notificationRequestId: String? = null
+    private var vaultRequest by mutableStateOf<JSONObject?>(null)
+    private var vaultToken = ""
     private var notificationSettings by mutableStateOf("")
     private var pushStatus by mutableStateOf("Popup notifications need Firebase configuration.")
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -62,6 +64,7 @@ class MainActivity : FragmentActivity() {
     }
     private var pendingInvitation: JSONObject? = null
     private var showPairConsent by mutableStateOf(false)
+    private var showRemoveVaults by mutableStateOf(false)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try { Keys.cleanupCameraKeys() } catch (_: Exception) { /* No viewer is resumed across activity restarts. */ }
@@ -83,6 +86,21 @@ class MainActivity : FragmentActivity() {
                         Text(status)
                         if (fingerprint.isNotEmpty()) Text("Pairing comparison: $fingerprint")
                     } }
+                    vaultRequest?.let { r ->
+                        val enroll = r.getString("type") == "vault-enroll"
+                        val d = Protocol.decode(r.getString("delegationJws"))
+                        val remaining = (r.getLong("expiresAt") - time).coerceAtLeast(0)
+                        Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(if (enroll) "ENABLE PHONE SIGN-IN" else "WINDOWS LOGIN REQUEST", style = MaterialTheme.typography.labelLarge)
+                            Text(pairedName, style = MaterialTheme.typography.headlineSmall)
+                            Text("Account: ${d.getString("loginName")}\nExpires in $remaining seconds")
+                            Text(if (enroll) "Your laptop will store its Windows password encrypted. This phone's hardware-backed key will control decryption. Your password is never sent to this phone or the server. Approve only if you started setup on your laptop." else "Approval releases the key for your laptop's encrypted Windows password. Windows verifies the password normally. Your Windows PIN remains available.")
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Button(onClick = { approveVault() }, enabled = remaining > 0 && !working) { Text(if (enroll) "Enable" else "Approve") }
+                                OutlinedButton(onClick = { denyVault() }, enabled = remaining > 0 && !working) { Text("Deny") }
+                            }
+                        } }
+                    }
                     request?.let { r ->
                         val remaining = (r.getLong("expiresAt") - time).coerceAtLeast(0)
                         Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -112,12 +130,19 @@ class MainActivity : FragmentActivity() {
                         else { Push.sync(this@MainActivity); pushStatus = "Popups enabled. Keep this notification channel enabled in Android settings." }
                     }, enabled = !working) { Text("Enable popup approvals") }
                     if (config == null) Button(onClick = { picker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = config == null && !working) { Text("Import pairing invitation") }
+                    if ((config?.optJSONObject("vaults")?.length() ?: 0) > 0) {
+                        Text("Phone sign-in enabled for ${config?.optJSONObject("vaults")?.length()} enrollment(s). Windows stores the encrypted password locally.")
+                        OutlinedButton(onClick = { showRemoveVaults = true }, enabled = !working) { Text("Remove phone sign-in keys") }
+                    }
                     OutlinedButton(onClick = { reset() }, enabled = !working) { Text("Reset local pairing") }
                     Text("With Firebase configured, requests arrive as popups while this app is closed. Tap to verify and authenticate. Android controls notification display.\n\nWindows PIN and password remain independent backup methods.", style = MaterialTheme.typography.bodySmall)
                 } }
                 if (showPairConsent) AlertDialog(onDismissRequest = { showPairConsent = false; pendingInvitation = null }, title = { Text("Confirm laptop pairing") }, text = { Text(status) },
                     confirmButton = { TextButton(onClick = { showPairConsent = false; beginPair(pendingInvitation!!); pendingInvitation = null }) { Text("Pair this laptop") } },
                     dismissButton = { TextButton(onClick = { showPairConsent = false; pendingInvitation = null }) { Text("Cancel") } })
+                if (showRemoveVaults) AlertDialog(onDismissRequest = { showRemoveVaults = false }, title = { Text("Remove phone sign-in keys?") }, text = { Text("This phone will no longer release your laptop's password key. Use Windows PIN or Password and run laptop enrollment again to restore phone sign-in. Pairing and camera controls remain available.") },
+                    confirmButton = { TextButton(onClick = { showRemoveVaults = false; config?.let { c -> c.optJSONObject("vaults")?.keys()?.asSequence()?.toList()?.forEach { Keys.delete(Vault.alias(it)) }; c.remove("vaults"); Keys.save(this@MainActivity, c); config = JSONObject(c.toString()) }; vaultRequest = null; status = "Phone sign-in keys removed. Use Windows PIN." }) { Text("Remove keys") } },
+                    dismissButton = { TextButton(onClick = { showRemoveVaults = false }) { Text("Cancel") } })
             }
         }
         lifecycleScope.launch { repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -191,6 +216,17 @@ class MainActivity : FragmentActivity() {
             }
             return
         }
+        val vault = withContext(Dispatchers.IO) { Relay(c, c.getString("transportToken")).call("GET", "/v1/vault-requests/pending") }
+        if (config !== c || working) return
+        if (vault.has("requestJws")) {
+            vaultToken = vault.getString("requestJws"); vaultRequest = VaultProtocol.verify(vaultToken, c); request = null
+            status = "Review this Windows sign-in request before approving."
+            notificationRequestId?.let { id -> if (id == vaultRequest!!.getString("requestId")) {
+                notificationRequestId = null; getSystemService(android.app.NotificationManager::class.java).cancel(id.hashCode()); getSystemService(android.app.NotificationManager::class.java).cancel(id, 0)
+            } }
+            return
+        }
+        vaultRequest = null
         val r = withContext(Dispatchers.IO) { Relay(c, c.getString("transportToken")).call("GET", "/v1/authentication-requests/pending") }
         if (config !== c || working) return
         if (!r.has("requestJws")) { request = null; return }
@@ -233,5 +269,47 @@ class MainActivity : FragmentActivity() {
             finally { working = false }
         }
     }
-    private fun reset() { config?.let { Keys.delete(it.getString("approvalAlias")); Keys.delete(it.getString("identityAlias")) }; Keys.clear(this); getSharedPreferences("push-health", MODE_PRIVATE).edit().clear().apply(); config = null; request = null; fingerprint = ""; pairedName = ""; status = "Local pairing removed. Also select Unpair on Windows before pairing again." }
+    private fun approveVault() {
+        val c = config ?: return; val r = vaultRequest ?: return; val token = vaultToken
+        try { require(!BuildConfig.ALLOW_SOFTWARE_KEYS); VaultProtocol.verify(token, c); working = true
+            if (r.getString("type") == "vault-enroll") lifecycleScope.launch {
+                val id = Protocol.decode(r.getString("delegationJws")).getString("vaultId")
+                val existed = Vault.exists(id)
+                try {
+                    val records = c.optJSONObject("vaults") ?: JSONObject()
+                    require(records.length() < 4 || records.has(id)) { "Remove old sign-in enrollments first" }
+                    if (records.has(id)) require(records.getJSONObject(id).getString("delegationJws") == r.getString("delegationJws"))
+                    val pub = withContext(Dispatchers.IO) { Vault.generate(id) }
+                    authenticate(Keys.signature(c.getString("approvalAlias")), "enable sign-in for $pairedName", onCancel = { if (!existed) Keys.delete(Vault.alias(id)) }) { sig ->
+                        Protocol.lifetime(r, 300)
+                        records.put(id, JSONObject().put("delegationJws", r.getString("delegationJws"))); c.put("vaults", records); Keys.save(this@MainActivity, c)
+                        val p = VaultProtocol.response(r, token, "approve").put("phoneJwk", pub)
+                        submitVault(c, r, Protocol.sign(Protocol.input(p), sig))
+                    }
+                } catch (_: Exception) { if (!existed) Keys.delete(Vault.alias(id)); working = false; status = "Hardware-backed phone sign-in setup failed. Use Windows PIN." }
+            } else {
+                val id = Protocol.decode(r.getString("delegationJws")).getString("vaultId")
+                val cipher = Vault.cipher(id)
+                prompt = BiometricPrompt(this, ContextCompat.getMainExecutor(this), object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        try { val released = Vault.release(result.cryptoObject?.cipher ?: error("Missing key operation"), r)
+                            val p = VaultProtocol.response(r, token, "approve").put("wrappedKey", released)
+                            submitVault(c, r, Protocol.sign(Protocol.input(p), Keys.signature(c.getString("identityAlias"))))
+                        } catch (_: Exception) { working = false; status = "Key release failed or request expired. Use Windows PIN." }
+                    }
+                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) { working = false; status = "Approval cancelled. No key released." }
+                })
+                prompt!!.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle("Authenticate to unlock $pairedName")
+                    .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL).setConfirmationRequired(true).build(), BiometricPrompt.CryptoObject(cipher))
+            }
+        } catch (_: Exception) { working = false; status = "Phone sign-in unavailable. Use Windows PIN." }
+    }
+    private fun denyVault() { try { val c = config ?: return; val r = vaultRequest ?: return; val p = VaultProtocol.response(r, vaultToken, "deny"); working = true
+        submitVault(c, r, Protocol.sign(Protocol.input(p), Keys.signature(c.getString("identityAlias"))))
+    } catch (_: Exception) { working = false; status = "Request unavailable." } }
+    private fun submitVault(c: JSONObject, r: JSONObject, token: String) { vaultRequest = null
+        lifecycleScope.launch { try { withContext(Dispatchers.IO) { Relay(c, c.getString("transportToken")).call("POST", "/v1/vault-requests/${r.getString("requestId")}/responses", JSONObject().put("responseJws", token)) }; status = "Response delivered. Windows performs the sign-in." }
+            catch (_: Exception) { status = "Delivery failed. Use Windows PIN; retry setup if enrollment was interrupted." } finally { working = false } }
+    }
+    private fun reset() { config?.let { c -> Keys.delete(c.getString("approvalAlias")); Keys.delete(c.getString("identityAlias")); c.optJSONObject("vaults")?.keys()?.asSequence()?.toList()?.forEach { Keys.delete(Vault.alias(it)) } }; Keys.clear(this); getSharedPreferences("push-health", MODE_PRIVATE).edit().clear().apply(); config = null; request = null; vaultRequest = null; fingerprint = ""; pairedName = ""; status = "Local pairing removed. Also select Unpair on Windows before pairing again." }
 }

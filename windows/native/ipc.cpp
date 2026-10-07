@@ -52,9 +52,18 @@ bool systemProcess(DWORD process,const wchar_t* image){
     if(image){wchar_t directory[MAX_PATH]{},path[32768]{};if(!GetSystemDirectoryW(directory,MAX_PATH))return false;DWORD size=32768;if(!QueryFullProcessImageNameW(handle.get(),0,path,&size))return false;return _wcsicmp(path,(std::wstring(directory)+L"\\"+image).c_str())==0;}return true;
   }catch(...){return false;}
 }
-bool valid(const Request& r){return r.magic==WireMagic&&r.version==WireVersion&&r.operation>=Operation::Describe&&r.operation<=Operation::Cancel&&(r.scenario==1||r.scenario==2)&&terminated(r.sid)&&validSid(r.sid.data())&&(r.operation==Operation::Describe||!IsEqualGUID(r.operationId,GUID{}));}
+bool valid(const Request& r){return r.magic==WireMagic&&r.version==WireVersion&&r.operation>=Operation::Describe&&r.operation<=
+#ifdef PU_PASSWORD_UNLOCK
+Operation::Claim
+#else
+Operation::Cancel
+#endif
+&&(r.scenario==1||r.scenario==2)&&terminated(r.sid)&&validSid(r.sid.data())&&(r.operation==Operation::Describe||!IsEqualGUID(r.operationId,GUID{}));}
 bool valid(const Response& r,const Request& q){
-#ifdef PU_WINDOWS_UNLOCK
+#ifdef PU_PASSWORD_UNLOCK
+  if(r.windowsSignInEnabled!=1||r.proofSize>=ProofCapacity||((q.operation==Operation::Claim&&r.state==State::ApprovedSignIn)?r.proofSize==0:r.proofSize!=0))return false;
+  constexpr State last=State::ApprovedSignIn;
+#elif defined(PU_WINDOWS_UNLOCK)
   if(r.windowsSignInEnabled!=1||r.proofSize>=ProofCapacity||(r.state==State::ApprovedSignIn?r.proofSize==0:r.proofSize!=0))return false;
   constexpr State last=State::ApprovedSignIn;
 #else
@@ -65,7 +74,7 @@ bool valid(const Response& r,const Request& q){
 bool serviceProcess(DWORD process){return registeredService(process);}
 std::wstring statusText(State s){switch(s){
   case State::Ready:
-#ifdef PU_WINDOWS_UNLOCK
+#if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
     return L"Ready. Select Unlock with Phone, or use Windows PIN.";
 #else
     return L"Approval preview ready. Windows PIN is still required.";
@@ -89,7 +98,11 @@ void serve(const std::wstring& name,const std::wstring& sddl,HANDLE stop,const A
   while(WaitForSingleObject(stop,0)!=WAIT_OBJECT_0){auto ready=event();OVERLAPPED op{};op.hEvent=ready.get();BOOL connected=ConnectNamedPipe(pipe.get(),&op);DWORD error=connected?ERROR_SUCCESS:GetLastError();
     if(error==ERROR_IO_PENDING){HANDLE waits[]{stop,ready.get()};auto result=WaitForMultipleObjects(2,waits,FALSE,INFINITE);if(result!=WAIT_OBJECT_0+1){CancelIoEx(pipe.get(),&op);DWORD count{};GetOverlappedResult(pipe.get(),&op,&count,TRUE);break;}DWORD count{};connected=GetOverlappedResult(pipe.get(),&op,&count,FALSE);}
     else if(error==ERROR_PIPE_CONNECTED)connected=TRUE;
-    if(connected){Caller caller{};Request request{};try{if(authorize(pipe.get(),caller)&&io(pipe.get(),&request,sizeof(request),false,stop,{})&&valid(request)&&request.sessionId==caller.sessionId){auto reply=dispatch(request,caller);if(valid(reply,request))io(pipe.get(),&reply,sizeof(reply),true,stop,{});}}catch(...){/* Fail closed; never send exception text or secrets. */}}
+    if(connected){Caller caller{};Request request{};try{if(authorize(pipe.get(),caller)&&io(pipe.get(),&request,sizeof(request),false,stop,{})&&valid(request)&&request.sessionId==caller.sessionId){auto reply=dispatch(request,caller);if(valid(reply,request))io(pipe.get(),&reply,sizeof(reply),true,stop,{});
+#ifdef PU_PASSWORD_UNLOCK
+      SecureZeroMemory(reply.proof.data(),reply.proof.size());
+#endif
+    }}catch(...){/* Fail closed; never send exception text or secrets. */}}
     DisconnectNamedPipe(pipe.get());
   }
 }

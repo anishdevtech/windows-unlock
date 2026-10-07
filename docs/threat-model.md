@@ -1,5 +1,8 @@
 # Threat model
 
+> Current 0.5 phone sign-in uses a locally encrypted password vault and built-in Windows authentication. See [one-time setup](password-unlock-setup.md) and [vault protocol](../protocol/password-vault-spec.md). Earlier no-password LSA/preview descriptions below refer to those separate modes.
+
+
 Version 0.2 extends the attack surface to remote power commands and live webcam:
 every command requires a fresh approval-key signature over a locally pending
 Windows offer and action allowlist. Identity/token/notification possession alone

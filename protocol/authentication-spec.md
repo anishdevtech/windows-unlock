@@ -1,5 +1,8 @@
 # WINDOWS-UNLOCK protocol v1
 
+> Current 0.5 phone sign-in uses a locally encrypted password vault and built-in Windows authentication. See [one-time setup](../docs/password-unlock-setup.md) and [vault protocol](password-vault-spec.md). Earlier no-password LSA/preview descriptions below refer to those separate modes.
+
+
 All authentication messages are compact JWS, alg=ES256, typ=phoneunlock+jws. Public keys
 are P-256 JWK (kty, crv, x, y); no private d parameter. JWS signatures use 64-byte R||S
 (RFC7518). Android's DER Signature output is converted with Nimbus's standard ECDSA

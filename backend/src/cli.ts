@@ -6,14 +6,14 @@ const [command,...args]=process.argv.slice(2);
 const pool=database(configuration());
 try {
   if(command==='migrate') {
-    for(const name of ['001_initial.sql','002_remote.sql','003_diagnostics.sql'])await pool.query(readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
+    for(const name of ['001_initial.sql','002_remote.sql','003_diagnostics.sql','004_vault.sql'])await pool.query(readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
   }
   else if(command==='prune') {
     const cutoff=Math.floor(Date.now()/1000);
     await pool.query('DELETE FROM camera_frames WHERE (data->>\'expiresAt\')::bigint<$1',[cutoff]);
     await pool.query('DELETE FROM rate_limits WHERE (data->>\'bucket\')::bigint<$1',[Math.floor(Date.now()/60000)-2]);
     await pool.query('DELETE FROM diagnostic_logs WHERE (data->>\'timestamp\')::bigint<$1',[cutoff-604800]);
-    for(const table of ['remote_commands','remote_offers','pairing_sessions'])await pool.query(`DELETE FROM ${table} WHERE (data->>'expiresAt')::bigint<$1`,[cutoff-86400]);
+    for(const table of ['remote_commands','remote_offers','pairing_sessions','vault_requests'])await pool.query(`DELETE FROM ${table} WHERE (data->>'expiresAt')::bigint<$1`,[cutoff-86400]);
     console.log('Expired transport data removed');
   }
   else if(command==='bootstrap') {

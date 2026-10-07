@@ -1,5 +1,8 @@
 # Recovery
 
+> Current 0.5 phone sign-in uses a locally encrypted password vault and built-in Windows authentication. See [one-time setup](password-unlock-setup.md) and [vault protocol](../protocol/password-vault-spec.md). Earlier no-password LSA/preview descriptions below refer to those separate modes.
+
+
 Phase 1 is an ordinary desktop app. Close it, stop the relay, or remove project data;
 Windows sign-in still works normally. There is no custom PIN database, authentication
 registry modification, provider filter, keyboard simulation, or password storage.

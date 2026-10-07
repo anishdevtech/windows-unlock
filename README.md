@@ -1,11 +1,26 @@
 # WINDOWS-UNLOCK for Windows 11
 
-The prototype includes a native Windows desktop/tray companion, an Android 11+
-application, and a deployable TypeScript/PostgreSQL HTTPS relay. Version 0.3 also
-implements a separate native LSA authentication package, Credential Provider and
-LocalSystem service for phone-approved **existing console session unlock**.
-**These native components are uninstalled and Windows/Winlogon acceptance is not
-yet validated. This laptop still requires normal Windows PIN/password.**
+Version 0.5 adds **phone-controlled encrypted Windows password sign-in** through
+an additional native Credential Provider and LocalSystem service. Windows' built-in
+Negotiate package checks the password. This architecture requires no custom LSA
+package, Microsoft Hardware Developer Program enrollment, or EV certificate.
+The password stays encrypted on the laptop; Android's hardware-backed, per-use
+BiometricPrompt key releases its decryption key only to a fresh laptop request.
+
+**The code and setup tools are built and partially tested; this laptop's Application
+Control policy blocks some unsigned native checks. Actual Winlogon sign-in on the
+personal Microsoft account remains a physical-device acceptance check. The new
+provider is not installed or enrolled yet.** Normal Windows PIN and Password remain
+available. The user explicitly accepted local encrypted password storage for this
+alternative; earlier password-free LSA instructions describe a separate legacy mode.
+
+Use [one-time phone sign-in setup](docs/password-unlock-setup.md),
+[vault protocol](protocol/password-vault-spec.md), and
+[security/acceptance notes](docs/password-vault-security.md).
+
+Build with `scripts/Build-PasswordUnlock.ps1`. Package the development APK and
+allowlisted native files with `scripts/Package-PasswordUnlock.ps1 -UnsignedPrototype`.
+Packaging does not install anything or override Windows policy.
 
 Start with [setup](docs/setup.md), [protocol](protocol/authentication-spec.md),
 [architecture](docs/architecture.md), and [recovery](docs/recovery.md).
@@ -21,7 +36,9 @@ Builds and test results, including remaining physical-phone checks, are recorded
 runtime; run `scripts/Start-Local.ps1` to start the relay/database and desktop app.
 
 Windows Hello PIN and password remain independent recovery methods. No Windows
-password, Windows PIN, biometric template, or private Android key is transmitted.
+password is sent to the phone/server; no PIN, biometric template, or private Android
+key is transmitted. Password credentials are returned locally to Windows only after
+phone-controlled decryption and are wiped from application buffers.
 No Credential Provider or LSA package has been installed on this laptop.
 
 The older native preview includes a compiled V2 Credential Provider, LocalSystem
@@ -31,14 +48,15 @@ including after valid phone approval. Run `scripts/Build-NativePreview.ps1` to b
 without installing anything. See [native development](docs/native-development.md)
 and [native verification](docs/native-verification.md) for that preview's tested behavior.
 
-The actual unlock targets are `WindowsUnlockAuth.dll`, `CredentialProvider.dll`,
+The **legacy password-free experimental** targets are `WindowsUnlockAuth.dll`, `CredentialProvider.dll`,
 `PhoneUnlockService.exe` and `PhoneUnlockStage.exe`. Run
 `scripts/Build-WindowsUnlock.ps1` to build them without installing. Follow
 [LSA signing and setup](docs/lsa-signing-and-setup.md) for the EV certificate,
 organization/Partner Center registration, Microsoft submission, signed VM installer
 and independent recovery tests. See [implementation and validation](docs/lsa-verification.md).
 Signing alone does not establish personal Microsoft-account compatibility.
-First sign-in after a reboot remains PIN/password; cold-boot phone login is not implemented.
+That legacy mode does not implement cold-boot phone login. The 0.5 password service
+runs before first sign-in; its cold-boot code path requires real-device acceptance.
 
 The desktop companion can optionally send a test approval prompt when the current
 Windows session locks, including while it runs in the tray. Enable its explicit

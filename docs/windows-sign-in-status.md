@@ -1,5 +1,8 @@
 # Windows lock-screen integration status
 
+> Current 0.5 phone sign-in uses a locally encrypted password vault and built-in Windows authentication. See [one-time setup](password-unlock-setup.md) and [vault protocol](../protocol/password-vault-spec.md). Earlier no-password LSA/preview descriptions below refer to those separate modes.
+
+
 Phone approval and Windows sign-in are separate operations. The current executable
 verifies a phone signature; **the desktop companion cannot unlock Windows**. Version
 0.3 implements separate `WindowsUnlockAuth.dll`, `CredentialProvider.dll` and

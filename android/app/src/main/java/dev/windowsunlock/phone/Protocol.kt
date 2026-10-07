@@ -35,7 +35,7 @@ object Protocol {
     fun verify(token: String, key: JSONObject, type: String): JSONObject {
         val p = decode(token); require(JWSObject.parse(token).verify(ECDSAVerifier(publicKey(key))))
         val purpose = p.getString("purpose")
-        require(p.getInt("v") == 1 && (purpose == "desktop-approval" || (purpose == "windows-unlock" && type in setOf("auth-request", "auth-response"))) && p.getString("type") == type)
+        require(p.getInt("v") == 1 && (purpose == "desktop-approval" || (purpose == "windows-unlock" && type in setOf("auth-request", "auth-response")) || (purpose == "password-unlock" && VaultProtocol.allowed(type))) && p.getString("type") == type)
         return p
     }
     fun input(payload: JSONObject): String = b64("{\"alg\":\"ES256\",\"typ\":\"phoneunlock+jws\"}".toByteArray()) + "." + b64(payload.toString().toByteArray(Charsets.UTF_8))

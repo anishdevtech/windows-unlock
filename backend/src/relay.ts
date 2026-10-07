@@ -5,6 +5,7 @@ import type { Store, Row } from './store.js';
 import type { PushSender } from './push.js';
 import { remoteRoutes } from './remote.js';
 import { diagnosticRoutes } from './diagnostics.js';
+import { vaultRoutes } from './vault.js';
 
 export function createApp(store: Store, https?: { key: Buffer; cert: Buffer }, push?:PushSender) {
   return configureApp(Fastify(serverOptions(https)),store,push);
@@ -43,7 +44,7 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
   };
   const pairing = async (id: string, s=store) => { requireThat(uuid(id)); const p=await s.get('device_pairings',id); requireThat(p?.active,'not_paired',403); return p; };
   app.get('/',async (_req,reply)=>reply.redirect('/health'));
-  app.get('/health', async()=>({status:'ok',mode:'approval-relay',protocolPurposes:['desktop-approval','windows-unlock'],runtimeVersion:'0.4.0',region:process.env.VERCEL_REGION??'local'}));
+  app.get('/health', async()=>({status:'ok',mode:'approval-relay',protocolPurposes:['desktop-approval','windows-unlock','password-unlock'],runtimeVersion:'0.5.0',region:process.env.VERCEL_REGION??'local'}));
   app.post('/v1/pairing-sessions', async req => store.transaction(async s=> {
     const w=await device(req,'windows',s); const b=req.body as any; const p=await verified(b.invitationJws,w.jwk,'pair-invitation');
     fields(p,['sessionId','windowsDeviceId','windowsName','nonce','issuedAt','expiresAt']); lifetime(p,300);
@@ -140,5 +141,6 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
   }));
   remoteRoutes(app,store,device);
   diagnosticRoutes(app,store,device);
+  vaultRoutes(app,store,device,push);
   return app;
 }

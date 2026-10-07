@@ -19,7 +19,8 @@ async function fixture(t:TestContext,push?:import('../src/push.js').PushSender){
     await pool.query(readFileSync(new URL('../migrations/001_initial.sql',import.meta.url),'utf8'));
     await pool.query(readFileSync(new URL('../migrations/002_remote.sql',import.meta.url),'utf8'));
     await pool.query(readFileSync(new URL('../migrations/003_diagnostics.sql',import.meta.url),'utf8'));
-    await pool.query('TRUNCATE users,windows_devices,android_devices,device_pairings,pairing_sessions,authentication_requests,authentication_events,remote_offers,remote_commands,camera_frames,rate_limits,diagnostic_logs');store=new PgStore(pool);
+    await pool.query(readFileSync(new URL('../migrations/004_vault.sql',import.meta.url),'utf8'));
+    await pool.query('TRUNCATE users,windows_devices,android_devices,device_pairings,pairing_sessions,authentication_requests,authentication_events,remote_offers,remote_commands,camera_frames,rate_limits,diagnostic_logs,vault_requests');store=new PgStore(pool);
   }
   const app=createApp(store,undefined,push);t.after(async()=>{await app.close();await pool?.end();});
   const w=await key(),approval=await key(),identity=await key();const wid=randomUUID(),aid=randomUUID(),pair=randomUUID(),sid=randomUUID();const wt=transport(),at=transport(),pt=transport();

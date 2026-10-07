@@ -33,11 +33,12 @@ Json load(const std::filesystem::path& file);
 class SigningKey {
   NCRYPT_PROV_HANDLE provider_{}; NCRYPT_KEY_HANDLE key_{};
 public:
-  explicit SigningKey(const std::string& name, bool create=false);
+  explicit SigningKey(const std::string& name, bool create=false, bool machine=false);
   ~SigningKey();
   SigningKey(const SigningKey&)=delete;
   Json jwk() const;
   std::string sign(const Json& payload) const;
+  void erase();
 };
 Json message(const std::string& type, const std::string& purpose="desktop-approval");
 class PendingApproval {

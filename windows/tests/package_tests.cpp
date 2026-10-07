@@ -14,6 +14,7 @@ NTSTATUS NTAPI copyClient(PLSA_CLIENT_REQUEST,ULONG n,PVOID p,PVOID source){Copy
 NTSTATUS NTAPI client(PSECPKG_CLIENT_INFO c){*c={};c->ProcessID=GetCurrentProcessId();c->Restricted=TRUE;return 0;}
 }
 int wmain(int argc,wchar_t** argv){try{
+  SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);
   require(argc==2,"DLL path required");auto path=std::filesystem::absolute(argv[1]);auto dll=LoadLibraryExW(path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);require(dll!=nullptr,"Package DLL load blocked or failed; inspect Application Control");
   auto initialize=reinterpret_cast<SpLsaModeInitializeFn>(GetProcAddress(dll,"SpLsaModeInitialize"));require(initialize!=nullptr,"SSP/AP entrypoint missing");ULONG version{},count{};PSECPKG_FUNCTION_TABLE tables{};require(initialize(SECPKG_INTERFACE_VERSION,&version,&tables,&count)==0&&count==1&&tables&&tables->LogonUserEx2&&tables->CallPackageUntrusted,"Authentication callbacks missing");
   LSA_SECPKG_FUNCTION_TABLE support{};support.GetClientInfo=client;support.AllocateLsaHeap=heap;support.FreeLsaHeap=release;support.CreateLogonSession=createSession;support.DeleteLogonSession=deleteSession;support.AllocateClientBuffer=allocateClient;support.CopyToClientBuffer=copyClient;support.FreeClientBuffer=freeClient;

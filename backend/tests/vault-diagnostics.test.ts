@@ -1,0 +1,20 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {randomBytes,randomUUID} from 'node:crypto';
+import {generateKeyPair,exportJWK,CompactSign} from 'jose';
+import {createApp} from '../src/relay.js';
+import {MemoryStore} from '../src/store.js';
+import {hash,now} from '../src/protocol.js';
+test('native diagnostics require paired delegation and reject secret or forged entries',async t=>{
+  const store=new MemoryStore(),app=createApp(store);t.after(()=>app.close());
+  const root=await generateKeyPair('ES256',{extractable:true}),machine=await generateKeyPair('ES256',{extractable:true}),other=await generateKeyPair('ES256',{extractable:true});
+  const wid=randomUUID(),aid=randomUUID(),pair=randomUUID(),wt=randomBytes(32).toString('base64url'),at=randomBytes(32).toString('base64url');
+  const sign=(k:typeof root,p:object)=>new CompactSign(Buffer.from(JSON.stringify(p))).setProtectedHeader({alg:'ES256',typ:'phoneunlock+jws'}).sign(k.privateKey);
+  await store.put('windows_devices',wid,{id:wid,jwk:await exportJWK(root.publicKey),tokenHash:hash(wt)});await store.put('android_devices',aid,{id:aid,tokenHash:hash(at)});await store.put('device_pairings',pair,{id:pair,windowsDeviceId:wid,androidDeviceId:aid,active:true});
+  const delegationJws=await sign(root,{v:1,purpose:'password-unlock',type:'vault-delegation',vaultId:randomUUID(),windowsDeviceId:wid,androidDeviceId:aid,pairingId:pair,accountBindingId:randomUUID(),windowsAccountSid:'S-1-5-21-1-2-3-1001',loginName:'TEST\\user',machineJwk:await exportJWK(machine.publicKey)});
+  const e={id:randomUUID(),timestamp:now(),code:'credential_submitted',level:'info',requestId:null,durationMs:null};
+  const post=async(entries:object[],signer=machine)=>app.inject({method:'POST',url:'/v1/vault-diagnostics',headers:{authorization:`Bearer ${wt}`},payload:{delegationJws,batchJws:await sign(signer,{v:1,purpose:'password-unlock',type:'diagnostic-batch',batchId:randomUUID(),windowsDeviceId:wid,issuedAt:now(),expiresAt:now()+300,entries})}});
+  assert.equal((await post([e])).statusCode,200);assert.equal((await post([e])).statusCode,200);assert.equal((await store.all('diagnostic_logs')).length,1);
+  assert.equal((await post([e],other)).statusCode,400);assert.equal((await post([{...e,password:'secret'}])).statusCode,400);assert.equal((await post([{...e,code:'secret password text'}])).statusCode,400);
+  assert.equal((await app.inject({method:'GET',url:'/v1/diagnostics',headers:{authorization:`Bearer ${at}`}})).json().entries[0].code,'credential_submitted');
+});

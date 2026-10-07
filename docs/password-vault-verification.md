@@ -18,8 +18,9 @@ Observed automated results:
   Control**. Current new vault cryptography/packing tests pass. The latest rebuilt
   password-provider DLL encountered a policy block during the COM fallback test.
   After rebuilding the harness with modal loader errors suppressed, that COM test
-  passed. The added V3 IPC test builds but is also blocked before execution;
-  no success is claimed for that test. Installer preflight requires it to run.
+  passed. A subsequent bounded run of the added V3 IPC test also passed. The current
+  three new-mode checks (vault crypto/packing, provider fallback, V3 IPC) pass.
+  The readiness executable is still blocked; installer preflight cannot complete.
 - Android 0.5.0 APK builds; **10 JVM tests pass**, including delegated trust, RSA
   release and actual CNG-to-JCA RSA/AES-GCM interoperability. Android lint passes
   with existing warnings. Hardware BiometricPrompt is not exercised by JVM tests.
@@ -28,6 +29,11 @@ Observed automated results:
 - Existing hosted desktop pairing is preserved; refreshed companion launches.
 - Production migration 004 applied through the existing verified TLS database
   connection, without changing device rows or pairing trust.
+- Production relay `/health` returns HTTP 200, `runtimeVersion: 0.5.0`, region
+  `bom1`. Unauthenticated vault polling/result/diagnostics routes return HTTP 401.
+- APK application ID and signing certificate match 0.4; version code is 5 and
+  software-key overrides are disabled. The allowlisted Windows ZIP manifest hashes
+  verify; it includes no private configuration, Firebase/server credentials or LSA DLL.
 
 **Actual observed blocker:** Application Control blocked the direct launch of the
 unsigned readiness executable, `PhoneUnlockPasswordCheck.exe`, both rebuilt IPC
@@ -36,8 +42,10 @@ reported **0xc0e90002 (`STATUS_SYSTEM_INTEGRITY_POLICY_VIOLATION`)**; Windows Co
 Integrity events 3077/3033 identify a signing-level/policy violation. The test harness
 now suppresses modal loader error dialogs and reports an ordinary test failure;
 this does not suppress policy enforcement. The rebuilt harness subsequently loaded
-the DLL and passed. This does not establish OS acceptance of the remaining
-executables or execution inside LogonUI. No trust roots, LSA/Code Integrity/App Control settings or policy exemptions
+the DLL and passed, and V3 IPC later passed. A final probe still produced Code
+Integrity 3077/3033 for `PhoneUnlockPasswordCheck.exe`. This does not establish OS
+acceptance of all installer executables or execution inside LogonUI. No trust roots,
+LSA/Code Integrity/App Control settings or policy exemptions
 were added. Installer preflight stops before registering the tile when any required
 program is blocked. A trusted/OS-permitted release is needed for deployment here.
 

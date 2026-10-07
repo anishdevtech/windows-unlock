@@ -51,7 +51,8 @@ IPC test executable and an attempted load of `CredentialProviderPassword.dll`. T
 **0xc0e90002** means `STATUS_SYSTEM_INTEGRITY_POLICY_VIOLATION`; Code Integrity
 events 3077/3033 confirm the signing/policy block. An earlier build's successful
 DLL test does not prove the final build is allowed. A rebuilt test harness then
-loaded the DLL and passed; the other blocked programs still prevent installation.
+loaded the DLL and passed; the V3 IPC test also subsequently passed. The final
+readiness probe remains blocked and prevents installation.
 No policy was changed.
 Installation will stop during preflight until Windows
 allows the build, for example through a trusted publisher-signed release. Do not

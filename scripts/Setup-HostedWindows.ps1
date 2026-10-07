@@ -26,13 +26,7 @@ $taskHealth=Invoke-RestMethod -Uri "$RelayUrl/health" -TimeoutSec 20
 $taskDesktopSupported=$taskHealth.mode -eq 'desktop-approval-only' -or ($taskHealth.mode -eq 'approval-relay' -and $taskHealth.protocolPurposes -contains 'desktop-approval')
 if($taskHealth.status -ne 'ok' -or -not $taskDesktopSupported){throw 'Hosted relay is not ready or has an unexpected protocol mode.'}
 New-Item -ItemType Directory -Force -Path $taskState | Out-Null
-$taskSid=[Security.Principal.WindowsIdentity]::GetCurrent().User
-$taskAcl=New-Object Security.AccessControl.DirectorySecurity
-$taskAcl.SetOwner($taskSid)
-$taskAcl.SetAccessRuleProtection($true,$false)
-$taskRule=New-Object Security.AccessControl.FileSystemAccessRule($taskSid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
-$taskAcl.AddAccessRule($taskRule)
-Set-Acl -LiteralPath $taskState -AclObject $taskAcl
+& (Join-Path $PSScriptRoot "Protect-ProfileState.ps1") -Path $taskState
 function Invoke-TaskCompanion([string[]]$ClientArguments) {
   $taskArgs=@('--state',$taskState)+$ClientArguments
   $taskQuoted=$taskArgs | ForEach-Object { '"'+($_ -replace '(\\*)"','$1$1\"' -replace '(\\+)$','$1$1')+'"' }
@@ -90,7 +84,7 @@ foreach($taskShortcutPath in $taskShortcutPaths) {
   $taskShortcut.Description='WINDOWS-UNLOCK hosted desktop companion; Windows PIN remains available.'
   $taskShortcut.Save()
 }
-Write-Output 'Hosted Windows setup complete. Open WINDOWS-UNLOCK Hosted, click Pair phone, import the new invitation on Android and compare both confirmation codes.'
+Write-Output 'Hosted setup ready. Existing pairing was preserved. Open the companion; use Pair phone only if this is a new setup.'
 Write-Output "Protected state: $taskState"
 Write-Output 'No Credential Provider was installed. Windows PIN/password are unchanged.'
 if($Launch){Start-Process -FilePath $taskExe -ArgumentList ('--state "'+$taskState+'"') -WindowStyle Normal}

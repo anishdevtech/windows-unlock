@@ -68,7 +68,7 @@ class MainActivity : FragmentActivity() {
         notificationRequestId = intent.getStringExtra("approvalRequestId") ?: intent.getStringExtra("requestId")
         Push.channel(this)
         if (Push.configured(this)) { pushStatus = "Firebase configured. Enable popup approvals below."; Push.sync(this) }
-        try { config = Keys.load(this); config?.let { pairedName = Protocol.decode(it.getString("invitationJws")).getString("windowsName"); fingerprint = it.optString("fingerprint") } }
+        try { config = Keys.load(this); config?.let { pairedName = Protocol.decode(it.getString("invitationJws")).getString("windowsName"); fingerprint = if (it.optBoolean("paired")) "" else it.optString("fingerprint"); status = if (it.optBoolean("paired")) "Paired with $pairedName. Waiting for a secure request." else "Compare the pairing code and confirm on Windows." } }
         catch (_: Exception) { status = "Protected configuration cannot be opened. Reset local pairing and pair again." }
         setContent {
             UnlockTheme {
@@ -88,7 +88,7 @@ class MainActivity : FragmentActivity() {
                         Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("APPROVAL REQUEST", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
                             Text("Unlock $pairedName", style = MaterialTheme.typography.headlineSmall)
-                            LinearProgressIndicator(progress = { remaining.toFloat() / 60f }, modifier = Modifier.fillMaxWidth())
+                            LinearProgressIndicator(progress = { (remaining.toFloat() / 60f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
                             Text("Device: $pairedName\nTime: ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(r.getLong("issuedAt") * 1000))}\nExpires in $remaining seconds")
                             Text(if (r.getString("purpose") == "windows-unlock") "Someone is requesting access to your computer. Approval authorizes unlocking its existing Windows session." else "This request tests phone approval only; it cannot unlock Windows.")
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -233,5 +233,5 @@ class MainActivity : FragmentActivity() {
             finally { working = false }
         }
     }
-    private fun reset() { config?.let { Keys.delete(it.getString("approvalAlias")); Keys.delete(it.getString("identityAlias")) }; Keys.clear(this); config = null; request = null; fingerprint = ""; pairedName = ""; status = "Local pairing removed. Also select Unpair on Windows before pairing again." }
+    private fun reset() { config?.let { Keys.delete(it.getString("approvalAlias")); Keys.delete(it.getString("identityAlias")) }; Keys.clear(this); getSharedPreferences("push-health", MODE_PRIVATE).edit().clear().apply(); config = null; request = null; fingerprint = ""; pairedName = ""; status = "Local pairing removed. Also select Unpair on Windows before pairing again." }
 }

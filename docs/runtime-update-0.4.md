@@ -1,5 +1,7 @@
 # Runtime update 0.4
 
+See [verification results and remaining device checks](runtime-verification-0.4.md).
+
 This update improves the desktop companion and Android approval app. It does not
 activate Windows sign-in. The native provider, broker and authentication package
 are separate components. On the current laptop they remain uninstalled. A

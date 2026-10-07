@@ -13,6 +13,7 @@ they do not establish acceptance of the native authentication package by Winlogo
 | Scoped folder ACL creation and second-run idempotency | Passed on an empty temporary test directory; protected DACL, one current-user rule, owner retained |
 | Re-running hosted Windows setup | Passed; existing DPAPI pairing preserved, desktop/startup shortcuts refreshed |
 | Public Vercel health | HTTP 200 |
+| Vercel region after deployment | `/health` reports runtime 0.4.0 and `bom1`; routing header confirms Mumbai function execution |
 | Public diagnostics without credentials | HTTP 401 |
 | Hosted database migration 003 | Applied without resetting paired devices |
 | Current FCM notification payload | Accepted by Firebase's dry-run validation using the registered phone token |
@@ -32,6 +33,13 @@ separate `http_tests.exe` negative certificate-pin/connection-reuse executable w
 still blocked by App Control. That specific test remains unverified on this host;
 no rename, relocation, policy exclusion or security downgrade was used to run it.
 The running companion did connect to the hosted HTTPS relay successfully.
+
+The operator confirmed the Aiven database is in Mumbai. The relay was moved from
+Washington, D.C. (`iad1`) to Mumbai (`bom1`). Three local HTTPS health requests
+before the move took 3278, 2065 and 622 ms; three warm requests after the move took
+306, 327 and 250 ms. These are small observational samples with connection and
+cold-start differences, not a controlled benchmark or an approval/camera latency
+guarantee. The region change removes the relay-to-database intercontinental hop.
 
 Pending: confirm background banner display under the actual OPPO notification and
 battery settings, and visually confirm the new APK's webcam view on the phone.

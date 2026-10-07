@@ -93,6 +93,13 @@ complete historical request/command lists. Camera command polling is separated
 from frame uploads, and offline retries back off. Network RTT, Vercel cold starts,
 FCM delivery and OS battery restrictions still affect latency.
 
+This deployment uses a Mumbai Aiven database. `backend/vercel.json` pins the
+single Vercel function region to `bom1` (Mumbai), placing it near the database.
+`/health` exposes the runtime version and region to verify the deployed location.
+For another installation, change the region to match its database rather than
+automatically copying this project's location. Vercel recommends colocating
+functions and their data source: [region guidance](https://vercel.com/docs/regions).
+
 ## Verification limits
 
 Builds and automated protocol checks cannot prove a popup appeared or that this

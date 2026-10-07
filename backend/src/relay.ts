@@ -43,7 +43,7 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
   };
   const pairing = async (id: string, s=store) => { requireThat(uuid(id)); const p=await s.get('device_pairings',id); requireThat(p?.active,'not_paired',403); return p; };
   app.get('/',async (_req,reply)=>reply.redirect('/health'));
-  app.get('/health', async()=>({status:'ok',mode:'approval-relay',protocolPurposes:['desktop-approval','windows-unlock']}));
+  app.get('/health', async()=>({status:'ok',mode:'approval-relay',protocolPurposes:['desktop-approval','windows-unlock'],runtimeVersion:'0.4.0',region:process.env.VERCEL_REGION??'local'}));
   app.post('/v1/pairing-sessions', async req => store.transaction(async s=> {
     const w=await device(req,'windows',s); const b=req.body as any; const p=await verified(b.invitationJws,w.jwk,'pair-invitation');
     fields(p,['sessionId','windowsDeviceId','windowsName','nonce','issuedAt','expiresAt']); lifetime(p,300);

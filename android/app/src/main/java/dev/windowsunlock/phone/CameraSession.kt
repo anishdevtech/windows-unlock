@@ -20,9 +20,12 @@ import javax.crypto.spec.SecretKeySpec
 import java.util.Base64
 import org.json.JSONObject
 
-class CameraSession(val id: String) : AutoCloseable {
+class CameraSession(val id: String, private val config: JSONObject) : AutoCloseable {
     private val alias = "phoneunlock-camera-$id"
     private var sessionKey: ByteArray? = null
+    private var expectedCommandHash = ""
+    private var envelopeToken = ""
+    fun bind(commandHash: String) { check(expectedCommandHash.isEmpty()); expectedCommandHash = commandHash }
     private var sequence = 0L
     val lastSequence: Long get() = sequence
     private val deadline = android.os.SystemClock.elapsedRealtime() + 60000
@@ -36,9 +39,12 @@ class CameraSession(val id: String) : AutoCloseable {
                 .setKeySize(2048).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
                 .setDigests(KeyProperties.DIGEST_SHA256).setMgf1Digests(KeyProperties.DIGEST_SHA256)
                 .setIsStrongBoxBacked(strongBox).build()
-            return KeyPairGenerator.getInstance("RSA", "AndroidKeyStore").apply { initialize(spec) }.generateKeyPair()
+            return try { KeyPairGenerator.getInstance("RSA", "AndroidKeyStore").apply { initialize(spec) }.generateKeyPair() }
+                catch (e: Exception) { Keys.delete(alias); throw e }
         }
-        val pair = try { generate(true) } catch (_: StrongBoxUnavailableException) { generate(false) }
+        val pair = try { generate(true) } catch (_: StrongBoxUnavailableException) { Keys.delete(alias); generate(false) }
+          catch (_: java.security.InvalidAlgorithmParameterException) { Keys.delete(alias); generate(false) }
+          catch (_: java.security.ProviderException) { Keys.delete(alias); generate(false) }
         val info = KeyFactory.getInstance("RSA", "AndroidKeyStore").getKeySpec(pair.private, KeyInfo::class.java)
         if (info.securityLevel !in listOf(KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT, KeyProperties.SECURITY_LEVEL_STRONGBOX) && !BuildConfig.ALLOW_SOFTWARE_KEYS) { Keys.delete(alias); error("Hardware-backed viewer key required") }
         val key = pair.public as RSAPublicKey
@@ -52,11 +58,16 @@ class CameraSession(val id: String) : AutoCloseable {
             val value = frame.getString(name); val bytes = Base64.getUrlDecoder().decode(value)
             require(Protocol.b64(bytes) == value); return bytes
         }
+        val token = frame.getString("envelopeJws")
         if (sessionKey == null) {
+            check(expectedCommandHash.isNotEmpty())
+            val windowsId = Protocol.decode(config.getString("invitationJws")).getString("windowsDeviceId")
+            envelopeToken = CameraCrypto.verifyEnvelope(frame, config.getJSONObject("windowsJwk"), windowsId, config.getString("androidDeviceId"), config.getString("pairingId"), id, expectedCommandHash)
             val wrapped = bytes("wrappedKey"); require(wrapped.size == 256)
             val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
             sessionKey = CameraCrypto.unwrap(store.getKey(alias, null) as PrivateKey, wrapped)
         }
+        require(token == envelopeToken)
         val iv = bytes("iv"); require(iv.size == 12)
         val data = bytes("ciphertext"); require(data.size in 17..45016)
         return CameraCrypto.decrypt(sessionKey!!, iv, data, id, seq).also { sequence = seq }

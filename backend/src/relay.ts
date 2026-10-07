@@ -4,6 +4,7 @@ import { ApiError, hash, uuid, now, verified, decode, publicKey, lifetime, field
 import type { Store, Row } from './store.js';
 import type { PushSender } from './push.js';
 import { remoteRoutes } from './remote.js';
+import { diagnosticRoutes } from './diagnostics.js';
 
 export function createApp(store: Store, https?: { key: Buffer; cert: Buffer }, push?:PushSender) {
   return configureApp(Fastify(serverOptions(https)),store,push);
@@ -32,7 +33,7 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
   const tokenHash = (req: FastifyRequest) => { const h=req.headers.authorization; requireThat(typeof h==='string'&&h.startsWith('Bearer '),'unauthorized',401); const t=h.slice(7); requireThat(/^[A-Za-z0-9_-]{43}$/.test(t),'unauthorized',401); return hash(t); };
   const device = async (req: FastifyRequest, kind: 'windows'|'android', s=store): Promise<Row> => {
     const h=tokenHash(req); const found=(await s.find(kind === 'windows' ? 'windows_devices':'android_devices','tokenHash',h))[0];
-    requireThat(found,'unauthorized',401); return (await s.get(kind === 'windows' ? 'windows_devices':'android_devices',found.id))!;
+    requireThat(found,'unauthorized',401); return s===store?found:(await s.get(kind === 'windows' ? 'windows_devices':'android_devices',found.id))!;
   };
   const session = async (req: FastifyRequest, s=store): Promise<Row> => {
     const id=(req.params as any).id; requireThat(uuid(id)); const r=await s.get('pairing_sessions',id); requireThat(r,'not_found',404);
@@ -101,7 +102,7 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
   });
   app.get('/v1/authentication-requests/pending', async req=> {
     const phone=await device(req,'android'); const pair=(await store.find('device_pairings','androidDeviceId',phone.id)).find(p=>p.active); requireThat(pair,'not_paired',403);
-    const r=(await store.find('authentication_requests','androidDeviceId',phone.id)).find(r=>r.pairingId===pair.id&&r.state==='pending'&&r.expiresAt>now());
+    const r=(await store.pending('authentication_requests','androidDeviceId',phone.id)).find(r=>r.pairingId===pair.id&&r.state==='pending'&&r.expiresAt>now());
     return r ? {requestJws:r.requestJws} : {};
   });
   app.get('/v1/authentication-requests/:id', async req=> {
@@ -138,5 +139,6 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
     a.fcmToken=p.token;a.pushIssuedAt=p.issuedAt;await s.put('android_devices',a.id,a);return {registered:!!push};
   }));
   remoteRoutes(app,store,device);
+  diagnosticRoutes(app,store,device);
   return app;
 }

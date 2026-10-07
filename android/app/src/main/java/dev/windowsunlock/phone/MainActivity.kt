@@ -29,7 +29,7 @@ import java.text.DateFormat
 import java.util.Date
 
 class MainActivity : FragmentActivity() {
-    private var config: JSONObject? = null
+    private var config by mutableStateOf<JSONObject?>(null)
     private var status by mutableStateOf("Import a Windows pairing invitation to begin.")
     private var request by mutableStateOf<JSONObject?>(null)
     private var requestToken = ""
@@ -38,6 +38,7 @@ class MainActivity : FragmentActivity() {
     private var working by mutableStateOf(false)
     private var prompt: BiometricPrompt? = null
     private var notificationRequestId: String? = null
+    private var notificationSettings by mutableStateOf("")
     private var pushStatus by mutableStateOf("Popup notifications need Firebase configuration.")
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         pushStatus = if (granted) "Notifications allowed. Tap the popup to authenticate." else "Notifications disabled. You can still open the app to review requests."
@@ -64,28 +65,30 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try { Keys.cleanupCameraKeys() } catch (_: Exception) { /* No viewer is resumed across activity restarts. */ }
-        notificationRequestId = intent.getStringExtra("approvalRequestId")
+        notificationRequestId = intent.getStringExtra("approvalRequestId") ?: intent.getStringExtra("requestId")
         Push.channel(this)
         if (Push.configured(this)) { pushStatus = "Firebase configured. Enable popup approvals below."; Push.sync(this) }
         try { config = Keys.load(this); config?.let { pairedName = Protocol.decode(it.getString("invitationJws")).getString("windowsName"); fingerprint = it.optString("fingerprint") } }
         catch (_: Exception) { status = "Protected configuration cannot be opened. Reset local pairing and pair again." }
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            UnlockTheme {
                 var time by remember { mutableLongStateOf(System.currentTimeMillis() / 1000) }
                 LaunchedEffect(Unit) { while (true) { delay(1000); time = System.currentTimeMillis() / 1000 } }
-                Surface(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Spacer(Modifier.height(16.dp)); Text("WINDOWS-UNLOCK", style = MaterialTheme.typography.headlineMedium)
-                    Text("Secure approval for your Windows laptop", style = MaterialTheme.typography.bodyLarge)
+                Surface(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Spacer(Modifier.height(16.dp)); Text("WINDOWS\nUNLOCK", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
+                    Text("Your laptop, in your hands.", style = MaterialTheme.typography.titleMedium)
                     if (BuildConfig.ALLOW_SOFTWARE_KEYS) Text("TEST MODE: software keys allowed. Not for Windows sign-in.", color = MaterialTheme.colorScheme.error)
-                    Card { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(if (pairedName.isEmpty()) "Device pairing" else "Device: $pairedName", style = MaterialTheme.typography.titleLarge)
                         Text(status)
                         if (fingerprint.isNotEmpty()) Text("Pairing comparison: $fingerprint")
                     } }
                     request?.let { r ->
                         val remaining = (r.getLong("expiresAt") - time).coerceAtLeast(0)
-                        Card { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("Windows Login Request", style = MaterialTheme.typography.titleLarge)
+                        Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("APPROVAL REQUEST", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
+                            Text("Unlock $pairedName", style = MaterialTheme.typography.headlineSmall)
+                            LinearProgressIndicator(progress = { remaining.toFloat() / 60f }, modifier = Modifier.fillMaxWidth())
                             Text("Device: $pairedName\nTime: ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(r.getLong("issuedAt") * 1000))}\nExpires in $remaining seconds")
                             Text(if (r.getString("purpose") == "windows-unlock") "Someone is requesting access to your computer. Approval authorizes unlocking its existing Windows session." else "This request tests phone approval only; it cannot unlock Windows.")
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -97,13 +100,18 @@ class MainActivity : FragmentActivity() {
                     if (config?.optBoolean("paired") == true) RemoteControls(config!!, working) { sig, label, success, cancel ->
                         authenticate(sig, label, onCancel = cancel) { approved -> success(approved); working = false }
                     }
+                    HorizontalDivider()
+                    Text("Notifications", style = MaterialTheme.typography.titleLarge)
+                    Text(notificationSettings, style = MaterialTheme.typography.bodyMedium)
                     Text(pushStatus, style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = { startActivity(Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName).putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, Push.CHANNEL)) }) { Text("Open notification settings") }
+                    if (config?.optBoolean("paired") == true) Diagnostics(config!!)
                     OutlinedButton(onClick = {
                         if (!Push.configured(this@MainActivity)) pushStatus = "Add Firebase google-services.json and rebuild the APK. See docs/hosting.md."
                         else if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                         else { Push.sync(this@MainActivity); pushStatus = "Popups enabled. Keep this notification channel enabled in Android settings." }
                     }, enabled = !working) { Text("Enable popup approvals") }
-                    Button(onClick = { picker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = config == null && !working) { Text("Import pairing invitation") }
+                    if (config == null) Button(onClick = { picker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = config == null && !working) { Text("Import pairing invitation") }
                     OutlinedButton(onClick = { reset() }, enabled = !working) { Text("Reset local pairing") }
                     Text("With Firebase configured, requests arrive as popups while this app is closed. Tap to verify and authenticate. Android controls notification display.\n\nWindows PIN and password remain independent backup methods.", style = MaterialTheme.typography.bodySmall)
                 } }
@@ -116,7 +124,20 @@ class MainActivity : FragmentActivity() {
             while (isActive) { try { if (!working) poll() } catch (_: Exception) { status = "Phone authentication unavailable. Check connection; use Windows PIN if needed." }; delay(1000) }
         } }
     }
-    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); notificationRequestId = intent.getStringExtra("approvalRequestId") }
+    override fun onResume() {
+        super.onResume()
+        val manager = getSystemService(android.app.NotificationManager::class.java)
+        notificationSettings = when {
+            !manager.areNotificationsEnabled() -> "Notifications blocked. Allow them in Android settings."
+            (manager.getNotificationChannel(Push.CHANNEL)?.importance ?: 0) < android.app.NotificationManager.IMPORTANCE_HIGH -> "Popups disabled for this channel. Set it to high importance and enable banners."
+            else -> "Notification permission and high-importance channel enabled."
+        }
+        val preferences = getSharedPreferences("push-health", MODE_PRIVATE)
+        if (preferences.getBoolean("registered", false)) pushStatus = "Phone push token registered with your relay. On OPPO, allow background activity for WINDOWS-UNLOCK if delivery is delayed."
+    }
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); notificationRequestId = intent.getStringExtra("approvalRequestId") ?: intent.getStringExtra("requestId")
+        lifecycleScope.launch { try { if (!working) poll() } catch (_: Exception) { status = "Request unavailable or expired. No approval sent." } }
+    }
     private fun authenticate(signature: Signature, subtitle: String, onCancel: () -> Unit = {}, success: (Signature) -> Unit) {
         val flags = BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
         check(BiometricManager.from(this).canAuthenticate(flags) == BiometricManager.BIOMETRIC_SUCCESS)
@@ -183,6 +204,7 @@ class MainActivity : FragmentActivity() {
         notificationRequestId?.let { id -> if (id == p.getString("requestId")) {
             notificationRequestId = null
             getSystemService(android.app.NotificationManager::class.java).cancel(id.hashCode())
+            getSystemService(android.app.NotificationManager::class.java).cancel(id, 0)
             // Notification tap shows the verified request. Approve still requires an explicit button press.
         } }
     }

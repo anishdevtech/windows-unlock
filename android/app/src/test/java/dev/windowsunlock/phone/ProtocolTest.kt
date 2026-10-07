@@ -32,6 +32,20 @@ class ProtocolTest {
         assertEquals("windows-unlock", Protocol.verify(signed("auth-response"), jwk, "auth-response").getString("purpose"))
         try { Protocol.verify(signed("remote-command"), jwk, "remote-command"); fail("Unlock purpose accepted for remote command") } catch (_: IllegalArgumentException) {}
     }
+    @Test fun cameraEnvelopeRejectsRelaySubstitutionAndWrongCommand() {
+        val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        val jwk = JSONObject(ECKey.Builder(Curve.P_256, pair.public as ECPublicKey).build().toJSONString())
+        val wrapped = Protocol.b64(ByteArray(256) { it.toByte() })
+        val envelope = Protocol.message("camera-envelope").put("cameraId", "camera").put("commandHash", "command")
+            .put("windowsDeviceId", "windows").put("androidDeviceId", "phone").put("pairingId", "pair").put("keyHash", Protocol.hash(wrapped))
+        val signature = Signature.getInstance("SHA256withECDSA").apply { initSign(pair.private) }
+        val token = Protocol.sign(Protocol.input(envelope), signature)
+        val frame = JSONObject().put("envelopeJws", token).put("wrappedKey", wrapped)
+        assertEquals(token, CameraCrypto.verifyEnvelope(frame, jwk, "windows", "phone", "pair", "camera", "command"))
+        for (bad in listOf("other-command", "")) try { CameraCrypto.verifyEnvelope(frame, jwk, "windows", "phone", "pair", "camera", bad); fail("Wrong command accepted") } catch (_: IllegalArgumentException) {}
+        frame.put("wrappedKey", Protocol.b64(ByteArray(256)))
+        try { CameraCrypto.verifyEnvelope(frame, jwk, "windows", "phone", "pair", "camera", "command"); fail("Relay key substitution accepted") } catch (_: IllegalArgumentException) {}
+    }
     @Test fun cngCameraEncryptionVerifiesOnJca() {
         val output = System.getProperty("phoneunlock.fixtureOutput") ?: return
         val root = java.io.File(output).parentFile?.parentFile ?: return

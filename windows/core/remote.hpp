@@ -14,7 +14,10 @@ class RemoteAgent {
   std::jthread thread_;
 public:
   RemoteAgent(Json config,std::function<void(std::string)> status,
-              std::function<bool()> cameraPermitted);
+              std::function<bool()> cameraPermitted,
+              std::function<bool(bool)> cameraDisclosure,
+              std::function<bool()> cameraIndicatorVisible,
+              std::function<void(const char*)> trace);
   ~RemoteAgent();
 };
 // Standard RSA-OAEP(SHA256/MGF1-SHA256) + AES-256-GCM camera transport.

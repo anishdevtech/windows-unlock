@@ -10,6 +10,12 @@ yet validated. This laptop still requires normal Windows PIN/password.**
 Start with [setup](docs/setup.md), [protocol](protocol/authentication-spec.md),
 [architecture](docs/architecture.md), and [recovery](docs/recovery.md).
 
+Version 0.4 adds system-rendered background notifications, clearer native sign-in
+status, a visible camera-sharing indicator that works from the tray, signed camera
+key envelopes, connection reuse and sanitized server diagnostics. Follow the
+[runtime update instructions](docs/runtime-update-0.4.md) to update both clients
+and the database without removing your pairing.
+
 Builds and test results, including remaining physical-phone checks, are recorded in
 [verification](docs/verification.md). This checkout has a provisioned local development
 runtime; run `scripts/Start-Local.ps1` to start the relay/database and desktop app.

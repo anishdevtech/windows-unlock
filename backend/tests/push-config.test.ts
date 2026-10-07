@@ -2,9 +2,17 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {generateKeyPairSync} from 'node:crypto';
 import {deleteApp,getApps} from 'firebase-admin/app';
-import {firebasePush} from '../src/push.js';
+import {firebasePush,approvalPushPayload} from '../src/push.js';
 import {createApp} from '../src/relay.js';
 import {MemoryStore} from '../src/store.js';
+test('background hints use a private high-priority system notification',()=>{
+  const payload=approvalPushPayload('test-token','request-id',Math.floor(Date.now()/1000)+60);
+  assert.ok(payload.notification);assert.equal(payload.android?.priority,'high');
+  assert.equal(payload.android?.notification?.visibility,'private');
+  assert.equal(payload.android?.notification?.channelId,'approval_requests_v1');
+  assert.equal(payload.data?.approvalRequestId,'request-id');assert.ok(payload.android!.ttl!<=60000);
+  assert.deepEqual(Object.keys(payload.data!).sort(),['approvalRequestId','expiresAt','kind','requestId']);
+});
 
 test('malformed Firebase credentials do not crash the protected relay or disclose secrets',async t=>{
   const invalid=[

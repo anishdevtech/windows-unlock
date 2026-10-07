@@ -1,6 +1,10 @@
 #include "core.hpp"
 #include "remote.hpp"
 #include "lock_prompt.hpp"
+#include "telemetry.hpp"
+#include "camera.hpp"
+#include <winsvc.h>
+#include <dwmapi.h>
 #include <shellapi.h>
 #include <commctrl.h>
 #include <objbase.h>
@@ -11,14 +15,19 @@
 #include <optional>
 using namespace pu;
 namespace {
+HWND cameraIndicator{};std::atomic<HWND> visibleIndicator{};HWND diagnosticsCheck{},startupCheck{};HFONT titleFont{},smallFont{};HBRUSH background=CreateSolidBrush(RGB(16,23,35));
+std::shared_ptr<Telemetry> telemetry;bool startupLaunch{},pendingCameraRevoke{};
 HWND window{},statusLabel{},remoteLabel{},powerCheck{},cameraCheck{},lockCheck{},pairButton{},requestButton{},cancelButton{},unpairButton{};
 std::unique_ptr<RemoteAgent> remoteAgent;std::atomic<bool> cameraAllowed{false};NOTIFYICONDATAW tray{};
 LockPromptGate lockGate;DWORD sessionId{};bool sessionKnown{},sessionNotifications{};unsigned registrationAttempts{};std::atomic<bool> sessionLocked{false};
 std::filesystem::path stateDir;Json config;std::jthread worker;std::atomic<bool> cancel{false},busy{false},closing{false};HFONT font{};
 std::atomic<std::shared_ptr<PendingApproval>> active;
-constexpr UINT StatusMessage=WM_APP+1,FinishedMessage=WM_APP+2,RemoteMessage=WM_APP+3,TrayMessage=WM_APP+4;
+constexpr UINT StatusMessage=WM_APP+1,FinishedMessage=WM_APP+2,RemoteMessage=WM_APP+3,TrayMessage=WM_APP+4,CameraMessage=WM_APP+5;
+void trace(const char* code,const char* level="info",const std::string& id={},int64_t duration=-1){if(telemetry)telemetry->emit(code,level,id,duration);}
+bool nativeServiceRunning(){SC_HANDLE manager=OpenSCManagerW(nullptr,nullptr,SC_MANAGER_CONNECT);if(!manager)return false;auto service=OpenServiceW(manager,L"WindowsUnlockService",SERVICE_QUERY_STATUS);SERVICE_STATUS_PROCESS state{};DWORD bytes{};bool running=service&&QueryServiceStatusEx(service,SC_STATUS_PROCESS_INFO,reinterpret_cast<BYTE*>(&state),sizeof(state),&bytes)&&state.dwCurrentState==SERVICE_RUNNING;if(service)CloseServiceHandle(service);CloseServiceHandle(manager);return running;}
+bool discloseCamera(bool enabled){if(!enabled){DWORD_PTR ignored{};SendMessageTimeoutW(window,CameraMessage,0,0,SMTO_ABORTIFHUNG,1500,&ignored);return true;}if(auto h=visibleIndicator.load())return IsWindowVisible(h)&&!IsIconic(h)&&cameraAllowed&&!sessionLocked&&!closing;DWORD_PTR shown{};return SendMessageTimeoutW(window,CameraMessage,1,0,SMTO_ABORTIFHUNG,1500,&shown)&&shown==1;}
 void remoteStatus(const std::string& s){if(!closing)PostMessageW(window,RemoteMessage,0,reinterpret_cast<LPARAM>(new std::wstring(wide(s))));}
-void startRemote(){remoteAgent.reset();if(config.contains("pairing")&&!closing){auto context=config;context["historyFile"]=utf8((stateDir/L"remote-history.jsonl").wstring());remoteAgent=std::make_unique<RemoteAgent>(context,remoteStatus,[]{return cameraAllowed.load()&&!sessionLocked&&IsWindowVisible(window)&&!IsIconic(window)&&!closing;});}}
+void startRemote(){remoteAgent.reset();if(config.contains("pairing")&&!closing){auto context=config;context["historyFile"]=utf8((stateDir/L"remote-history.jsonl").wstring());remoteAgent=std::make_unique<RemoteAgent>(context,remoteStatus,[]{return cameraAllowed.load()&&!sessionLocked&&!closing;},discloseCamera,[]{auto h=visibleIndicator.load();return h&&IsWindowVisible(h)&&!IsIconic(h);},[](const char* code){trace(code);});}}
 void status(const std::string& s){if(!closing)PostMessageW(window,StatusMessage,0,reinterpret_cast<LPARAM>(new std::wstring(wide(s))));}
 void persist(){save(stateDir/L"windows-config.dpapi",config);}
 Http relay(){return Http(config.at("relayUrl"),config.at("tlsPin"),config.at("transportToken"));}
@@ -39,6 +48,7 @@ std::optional<bool> actualSessionLocked(){
 }
 void cancelApproval(){cancel=true;if(auto p=active.load())p->cancel();}
 void record(const std::string& id,const std::string& result){
+  trace(result=="approved"?"approval_verified":result=="denied"?"approval_denied":result=="expired"?"approval_expired":"approval_failed","info",id);
   Json row{{"timestamp",epoch()},{"device",config.at("id")},{"authenticationResult",result},{"snapshotPath",nullptr},{"requestId",id}};
   std::ofstream out(stateDir/L"history.jsonl",std::ios::app);out<<row.dump()<<'\n';
   try{SigningKey key(config.at("id"));auto e=message("auth-event");e.update({{"requestId",id},{"pairingId",config.at("pairing").at("id")},{"result",result},{"timestamp",epoch()},{"snapshotPath",nullptr}});Json b{{"eventJws",key.sign(e)}};relay().call("POST","/v1/authentication-events",&b);}catch(...){/* local result remains authoritative */}
@@ -77,8 +87,9 @@ void requestApproval(bool fromLock){
   const auto token=key.sign(challenge);const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(60);auto pending=std::make_shared<PendingApproval>(challenge,token,pair,deadline);active.store(pending);Json body{{"requestJws",token}};
   if(cancel||closing){pending->cancel();return;}
   try{
-    const auto sent=relay().call("POST","/v1/authentication-requests",&body);
+    const auto started=std::chrono::steady_clock::now();const auto sent=relay().call("POST","/v1/authentication-requests",&body);
     const auto delivery=sent.value("pushDelivery",std::string("not_configured"));
+    trace("request_sent","info",id,std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count());trace(delivery=="sent"?"push_sent":delivery=="failed"?"push_failed":"push_missing","info",id);
     const auto deliveryStatus=delivery=="sent"?"Push accepted by Firebase. Android controls popup display.":delivery=="failed"?"Push failed. Open Android to review; check Firebase setup.":"No registered push token or Firebase setup. Enable popup approvals on Android.";
     status("Request created for "+pair.at("phoneName").get<std::string>()+"\n"+deliveryStatus);
     while(!cancel&&!closing&&std::chrono::steady_clock::now()<deadline&&epoch()<issued+60){auto r=relay().call("GET","/v1/authentication-requests/"+id);
@@ -101,10 +112,10 @@ void requestApproval(bool fromLock){
 void manualApproval(){requestApproval(false);}
 void lockApproval(){requestApproval(true);}
 void unpair(){const auto id=config.at("pairing").at("id").get<std::string>();config.erase("pairing");config["revocationPending"]=id;persist();try{relay().call("DELETE","/v1/device-pairings/"+id);config.erase("revocationPending");persist();status("Phone unpaired. Create a new invitation to pair again.");}catch(...){status("Local trust removed. Relay revocation will retry before pairing again.");}}
-void refresh(){EnableWindow(pairButton,!busy&&!config.contains("pairing"));EnableWindow(requestButton,!busy&&config.contains("pairing"));EnableWindow(unpairButton,!busy&&config.contains("pairing"));EnableWindow(cancelButton,busy);EnableWindow(powerCheck,!busy);EnableWindow(cameraCheck,!busy);EnableWindow(lockCheck,!busy&&sessionNotifications);}
+void refresh(){EnableWindow(pairButton,!busy&&!config.contains("pairing"));EnableWindow(requestButton,!busy&&config.contains("pairing"));EnableWindow(unpairButton,!busy&&config.contains("pairing"));EnableWindow(cancelButton,busy);EnableWindow(powerCheck,!busy);EnableWindow(cameraCheck,!busy);EnableWindow(lockCheck,!busy&&sessionNotifications);EnableWindow(startupCheck,!busy);EnableWindow(diagnosticsCheck,!busy);}
 void start(void(*operation)()){
-  if(busy.exchange(true))return;remoteAgent.reset();if(worker.joinable())worker.join();cancel=false;refresh();
-  worker=std::jthread([operation]{try{operation();}catch(...){status("Phone authentication failed. Check setup, TLS, relay and pairing.\nUse Windows PIN instead. No sign-in settings were changed.");}active.store(nullptr);PostMessageW(window,FinishedMessage,0,0);});
+  if(busy.exchange(true))return;if(worker.joinable())worker.join();cancel=false;refresh();
+  worker=std::jthread([operation]{try{operation();}catch(...){trace("relay_unavailable","warning");status("Phone authentication failed. Check setup, TLS, relay and pairing.\nUse Windows PIN instead. No sign-in settings were changed.");}active.store(nullptr);PostMessageW(window,FinishedMessage,0,0);});
 }
 void registerSessionNotifications(){
   if(sessionNotifications)return;
@@ -118,49 +129,71 @@ void registerSessionNotifications(){
   }
   refresh();
 }
-HWND control(const wchar_t* cls,const wchar_t* text,int x,int y,int w,int h,int id=0){auto child=CreateWindowW(cls,text,WS_CHILD|WS_VISIBLE|(std::wstring(cls)==L"BUTTON"?WS_TABSTOP:0),x,y,w,h,window,reinterpret_cast<HMENU>(INT_PTR(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);return child;}
+HWND control(const wchar_t* cls,const wchar_t* text,int x,int y,int w,int h,int id=0){auto child=CreateWindowW(cls,text,WS_CHILD|WS_VISIBLE|(std::wstring(cls)==L"BUTTON"?WS_TABSTOP|((id>=1&&id<=4)||id==11||id==12?BS_OWNERDRAW:0):0),x,y,w,h,window,reinterpret_cast<HMENU>(INT_PTR(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);return child;}
 LRESULT CALLBACK proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
-  case WM_CREATE:window=hwnd;font=CreateFontW(-18,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
-    control(L"STATIC",L"WINDOWS-UNLOCK",28,24,600,32);control(L"STATIC",L"Secure phone approval and remote controls",28,65,600,28);
-    control(L"STATIC",wide("Laptop: "+config.at("name").get<std::string>()).c_str(),28,112,600,28);
-    statusLabel=control(L"STATIC",config.contains("pairing")?L"Ready. Enable popup approvals on Android, then request a test.\nActual Windows sign-in is not implemented.":L"Create an invitation, then import it on your Android phone.",28,160,660,118);
-    pairButton=control(L"BUTTON",L"Pair phone",28,298,150,44,1);requestButton=control(L"BUTTON",L"Unlock with Phone (test)",190,298,250,44,2);cancelButton=control(L"BUTTON",L"Cancel",452,298,112,44,3);unpairButton=control(L"BUTTON",L"Unpair",576,298,100,44,4);
-    powerCheck=control(L"BUTTON",L"Allow phone lock / sleep / shutdown / restart",28,364,640,28,5);SetWindowLongPtrW(powerCheck,GWL_STYLE,GetWindowLongPtrW(powerCheck,GWL_STYLE)|BS_AUTOCHECKBOX);
-    cameraCheck=control(L"BUTTON",L"Allow live camera while this window is visible (60 seconds)",28,400,640,28,6);SetWindowLongPtrW(cameraCheck,GWL_STYLE,GetWindowLongPtrW(cameraCheck,GWL_STYLE)|BS_AUTOCHECKBOX);
-    lockCheck=control(L"BUTTON",L"Send a phone approval prompt when Windows locks (test only)",28,436,660,28,8);SetWindowLongPtrW(lockCheck,GWL_STYLE,GetWindowLongPtrW(lockCheck,GWL_STYLE)|BS_AUTOCHECKBOX);
+  case WM_CREATE:{window=hwnd;font=CreateFontW(-18,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+    BOOL dark=TRUE;DwmSetWindowAttribute(hwnd,20,&dark,sizeof(dark));
+    titleFont=CreateFontW(-28,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable Display");smallFont=CreateFontW(-15,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+    auto header=control(L"STATIC",L"WINDOWS-UNLOCK",28,22,650,42);SendMessageW(header,WM_SETFONT,reinterpret_cast<WPARAM>(titleFont),TRUE);
+    control(L"STATIC",L"Your phone. Your approval. Your laptop.",28,68,660,28);
+    control(L"STATIC",wide(config.at("name").get<std::string>()+(config.contains("pairing")?"  •  "+config.at("pairing").at("phoneName").get<std::string>():"  •  No paired phone")).c_str(),28,113,680,30);
+    control(L"STATIC",nativeServiceRunning()?L"Native service running • verify signed-package setup before use":L"Native sign-in unavailable • Windows PIN is required",28,151,680,30);
+    statusLabel=control(L"STATIC",config.contains("pairing")?L"Ready for a secure approval test.\nAndroid notifications and remote controls work from the tray.":L"Pair your phone to start. Confirm the same code on both devices.",28,195,680,94);
+    pairButton=control(L"BUTTON",L"Pair phone",28,298,146,44,1);requestButton=control(L"BUTTON",L"Send approval test",186,298,236,44,2);cancelButton=control(L"BUTTON",L"Cancel",434,298,116,44,3);unpairButton=control(L"BUTTON",L"Unpair",562,298,140,44,4);
+    control(L"STATIC",L"LAPTOP PERMISSIONS",28,362,650,28);
+    powerCheck=control(L"BUTTON",L"Allow phone lock, sleep, shutdown and restart",28,397,680,28,5);
+    cameraCheck=control(L"BUTTON",L"Allow camera preview with a visible sharing indicator",28,435,680,28,6);
+    lockCheck=control(L"BUTTON",L"Notify my phone when this Windows session locks (test)",28,473,680,28,8);
+    startupCheck=control(L"BUTTON",L"Send one approval test when the companion starts after sign-in",28,511,680,28,9);
+    diagnosticsCheck=control(L"BUTTON",L"Upload app diagnostics to my server • retained for 7 days",28,549,680,28,10);
+    for(auto check:{powerCheck,cameraCheck,lockCheck,startupCheck,diagnosticsCheck})SetWindowLongPtrW(check,GWL_STYLE,GetWindowLongPtrW(check,GWL_STYLE)|BS_AUTOCHECKBOX);
     SendMessageW(lockCheck,BM_SETCHECK,config.value("lockPromptsEnabled",false)?BST_CHECKED:BST_UNCHECKED,0);
+    SendMessageW(startupCheck,BM_SETCHECK,config.value("startupPromptsEnabled",false)?BST_CHECKED:BST_UNCHECKED,0);
+    SendMessageW(diagnosticsCheck,BM_SETCHECK,config.value("serverDiagnosticsEnabled",true)?BST_CHECKED:BST_UNCHECKED,0);
     SendMessageW(powerCheck,BM_SETCHECK,config.value("remotePowerEnabled",false)?BST_CHECKED:BST_UNCHECKED,0);cameraAllowed=config.value("cameraSharingEnabled",false);SendMessageW(cameraCheck,BM_SETCHECK,cameraAllowed?BST_CHECKED:BST_UNCHECKED,0);
-    remoteLabel=control(L"STATIC",L"Remote controls are opt-in. Camera sharing is off by default.",28,476,660,70);
-    control(L"STATIC",L"Windows PIN/password remain available. Phone approval does not sign in.\nClose minimizes to tray when paired. Right-click tray icon → Exit.",28,556,660,58);
-    tray.cbSize=sizeof(tray);tray.hWnd=hwnd;tray.uID=1;tray.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP;tray.uCallbackMessage=TrayMessage;tray.hIcon=LoadIconW(nullptr,IDI_SHIELD);wcscpy_s(tray.szTip,L"WINDOWS-UNLOCK • phone controls");Shell_NotifyIconW(NIM_ADD,&tray);registerSessionNotifications();if(!sessionNotifications)SetTimer(hwnd,1,3000,nullptr);startRemote();return 0;
-  case WM_COMMAND:if(LOWORD(wp)==1)start(pair);if(LOWORD(wp)==2)start(manualApproval);if(LOWORD(wp)==3)cancelApproval();if(LOWORD(wp)==4&&MessageBoxW(hwnd,L"Remove trust in the paired phone?",L"Unpair phone",MB_YESNO|MB_DEFBUTTON2)==IDYES)start(unpair);
+    remoteLabel=control(L"STATIC",L"Connecting remote controls… Camera sessions expire after 60 seconds.",28,597,680,54);
+    control(L"BUTTON",L"Check connection",28,661,190,40,11);control(L"BUTTON",L"Camera privacy",230,661,190,40,12);
+    auto footer=control(L"STATIC",L"Close keeps the paired companion in the tray. Right-click tray icon to exit.\nPIN and password stay available through Windows Sign-in options.",28,719,680,44);SendMessageW(footer,WM_SETFONT,reinterpret_cast<WPARAM>(smallFont),TRUE);
+    tray.cbSize=sizeof(tray);tray.hWnd=hwnd;tray.uID=1;tray.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP;tray.uCallbackMessage=TrayMessage;tray.hIcon=LoadIconW(nullptr,IDI_SHIELD);wcscpy_s(tray.szTip,L"WINDOWS-UNLOCK • phone controls");Shell_NotifyIconW(NIM_ADD,&tray);registerSessionNotifications();if(!sessionNotifications)SetTimer(hwnd,1,3000,nullptr);startRemote();if(startupLaunch&&config.value("startupPromptsEnabled",false)&&config.contains("pairing"))SetTimer(hwnd,2,2500,nullptr);return 0;}
+  case WM_COMMAND:if(LOWORD(wp)==1)start(pair);if(LOWORD(wp)==2)start(manualApproval);if(LOWORD(wp)==3)cancelApproval();if(LOWORD(wp)==4&&MessageBoxW(hwnd,L"Remove trust in the paired phone?",L"Unpair phone",MB_YESNO|MB_DEFBUTTON2)==IDYES){remoteAgent.reset();start(unpair);}
     if(LOWORD(wp)==8&&!busy&&sessionNotifications){bool enabled=SendMessageW(lockCheck,BM_GETCHECK,0,0)==BST_CHECKED;
       if(enabled&&MessageBoxW(hwnd,L"Send one time-limited approval notification to your paired phone when this Windows session locks? The companion can stay in the tray. This tests phone approval only: it does not unlock Windows, and you must still use Windows PIN. No camera is used. Enable?",L"Enable lock-event phone prompts",MB_YESNO|MB_DEFBUTTON2|MB_ICONQUESTION)!=IDYES){enabled=false;SendMessageW(lockCheck,BM_SETCHECK,BST_UNCHECKED,0);}
       config["lockPromptsEnabled"]=enabled;persist();}
     if((LOWORD(wp)==5||LOWORD(wp)==6)&&!busy){const bool camera=LOWORD(wp)==6;HWND check=camera?cameraCheck:powerCheck;bool enabled=SendMessageW(check,BM_GETCHECK,0,0)==BST_CHECKED;
-      if(enabled&&MessageBoxW(hwnd,camera?L"Your paired phone can request a live camera view after biometric authentication. Camera is used only while this window is visible and Windows is unlocked. Each session stops after 60 seconds. Minimize, close, or untick this setting to stop. No recording is stored.":L"Your paired phone can lock, sleep, shut down or restart this laptop after biometric authentication. Shutdown/restart can interrupt unsaved work. Enable?",L"Enable phone control",MB_YESNO|MB_DEFBUTTON2|MB_ICONQUESTION)!=IDYES){enabled=false;SendMessageW(check,BM_SETCHECK,BST_UNCHECKED,0);}
+      if(enabled&&MessageBoxW(hwnd,camera?L"Your paired phone can request a live camera view after biometric authentication. Windows must be unlocked. A visible camera-sharing indicator appears before capture, even when the companion is in the tray. Each session stops after 60 seconds. Close the indicator or untick this setting to stop. No recording is stored.":L"Your paired phone can lock, sleep, shut down or restart this laptop after biometric authentication. Shutdown/restart can interrupt unsaved work. Enable?",L"Enable phone control",MB_YESNO|MB_DEFBUTTON2|MB_ICONQUESTION)!=IDYES){enabled=false;SendMessageW(check,BM_SETCHECK,BST_UNCHECKED,0);}
       if(camera)cameraAllowed=enabled;remoteAgent.reset();config[camera?"cameraSharingEnabled":"remotePowerEnabled"]=enabled;persist();startRemote();}
+    if(LOWORD(wp)==9&&!busy){config["startupPromptsEnabled"]=SendMessageW(startupCheck,BM_GETCHECK,0,0)==BST_CHECKED;persist();}
+    if(LOWORD(wp)==10&&!busy){bool enabled=SendMessageW(diagnosticsCheck,BM_GETCHECK,0,0)==BST_CHECKED;config["serverDiagnosticsEnabled"]=enabled;persist();if(telemetry)telemetry->enabled(enabled);}
+    if(LOWORD(wp)==11&&!busy)start([]{auto begin=std::chrono::steady_clock::now();relay().call("GET","/health");auto r=relay().call("GET","/v1/device-status");auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-begin).count();trace("relay_ready","info",{},ms);status(std::string("Server reachable • ")+std::to_string(ms)+" ms\n"+(r.value("pushTokenRegistered",false)?"Phone push token registered. Check Android notification settings if no popup appears.":"Phone push token missing. Enable popup approvals in Android.")+"\nCamera devices: "+std::to_string(cameraDeviceCount())+". Use Camera privacy if viewing fails.");});
+    if(LOWORD(wp)==12)ShellExecuteW(hwnd,L"open",L"ms-settings:privacy-webcam",nullptr,nullptr,SW_SHOWNORMAL);
     if(LOWORD(wp)==7){closing=true;SendMessageW(hwnd,WM_CLOSE,0,0);}return 0;
-  case WM_TIMER:if(wp==1)registerSessionNotifications();return 0;
+  case WM_TIMER:if(wp==1)registerSessionNotifications();if(wp==2){KillTimer(hwnd,2);if(!busy&&!sessionLocked)start(manualApproval);}return 0;
   case WM_WTSSESSION_CHANGE:
     if(!sessionNotifications||static_cast<DWORD>(lp)!=sessionId)return 0;
     if(wp==WTS_SESSION_LOCK){
       // Check OS state instead of trusting a window message to generate a push.
       const auto locked=actualSessionLocked();if(!locked||!*locked)return 0;
-      sessionLocked=true;
+      sessionLocked=true;trace("session_locked");
       if(lockGate.onLock(config.value("lockPromptsEnabled",false),config.contains("pairing"),busy,WTSGetActiveConsoleSessionId()==sessionId,std::chrono::steady_clock::now()))start(lockApproval);
     }else if(wp==WTS_SESSION_UNLOCK){
       const auto locked=actualSessionLocked();if(!locked||*locked)return 0;
-      sessionLocked=false;lockGate.unlock();cancelApproval();
+      sessionLocked=false;trace("session_unlocked");lockGate.unlock();cancelApproval();
     }else if(wp==WTS_SESSION_LOGOFF||wp==WTS_CONSOLE_DISCONNECT||wp==WTS_REMOTE_DISCONNECT){sessionLocked=true;cancelApproval();}
     return 0;
+  case CameraMessage:
+    if(!wp){visibleIndicator=nullptr;if(cameraIndicator){DestroyWindow(cameraIndicator);cameraIndicator=nullptr;}return 0;}
+    if(!cameraAllowed||sessionLocked||closing)return 0;
+    if(!cameraIndicator){cameraIndicator=CreateWindowExW(WS_EX_TOPMOST,L"WindowsUnlockCameraIndicator",L"CAMERA SHARING — WINDOWS-UNLOCK",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,50,50,490,180,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);if(!cameraIndicator)return 0;ShowWindow(cameraIndicator,SW_SHOWNOACTIVATE);visibleIndicator=cameraIndicator;}
+    return IsWindowVisible(cameraIndicator)&&!IsIconic(cameraIndicator)?1:0;
+  case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:{auto dc=reinterpret_cast<HDC>(wp);SetTextColor(dc,RGB(220,231,246));SetBkColor(dc,RGB(16,23,35));return reinterpret_cast<LRESULT>(background);}
+  case WM_DRAWITEM:{auto item=reinterpret_cast<DRAWITEMSTRUCT*>(lp);if(item->CtlType!=ODT_BUTTON)break;auto dc=item->hDC;const bool disabled=item->itemState&ODS_DISABLED;auto brush=CreateSolidBrush(disabled?RGB(35,43,56):item->CtlID==2?RGB(50,125,242):RGB(40,56,76));FillRect(dc,&item->rcItem,brush);DeleteObject(brush);SetBkMode(dc,TRANSPARENT);SetTextColor(dc,disabled?RGB(110,125,144):RGB(240,246,255));SelectObject(dc,font);wchar_t text[100]{};GetWindowTextW(item->hwndItem,text,100);DrawTextW(dc,text,-1,&item->rcItem,DT_CENTER|DT_VCENTER|DT_SINGLELINE);if(item->itemState&ODS_FOCUS){auto r=item->rcItem;InflateRect(&r,-4,-4);DrawFocusRect(dc,&r);}return TRUE;}
   case StatusMessage:{auto text=reinterpret_cast<std::wstring*>(lp);SetWindowTextW(statusLabel,text->c_str());delete text;return 0;}
   case RemoteMessage:{auto text=reinterpret_cast<std::wstring*>(lp);SetWindowTextW(remoteLabel,text->c_str());delete text;return 0;}
   case TrayMessage:if(lp==WM_LBUTTONDBLCLK){ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);}if(lp==WM_RBUTTONUP){POINT point;GetCursorPos(&point);HMENU menu=CreatePopupMenu();AppendMenuW(menu,MF_STRING,7,L"Exit WINDOWS-UNLOCK");SetForegroundWindow(hwnd);TrackPopupMenu(menu,TPM_RIGHTBUTTON,point.x,point.y,0,hwnd,nullptr);DestroyMenu(menu);}return 0;
-  case FinishedMessage:if(worker.joinable())worker.join();busy=false;refresh();startRemote();return 0;
-  case WM_CLOSE:if(!closing&&config.contains("pairing")&&!busy){ShowWindow(hwnd,SW_HIDE);return 0;}closing=true;cameraAllowed=false;remoteAgent.reset();cancel=true;if(auto p=active.load())p->cancel();if(worker.joinable())worker.join();DestroyWindow(hwnd);return 0;
-  case WM_DESTROY:KillTimer(hwnd,1);if(sessionNotifications)WTSUnRegisterSessionNotification(hwnd);Shell_NotifyIconW(NIM_DELETE,&tray);if(font)DeleteObject(font);PostQuitMessage(0);return 0;
-  default:return DefWindowProcW(hwnd,msg,wp,lp);}}
+  case FinishedMessage:if(worker.joinable())worker.join();busy=false;if(pendingCameraRevoke){config["cameraSharingEnabled"]=false;persist();pendingCameraRevoke=false;}refresh();if(!remoteAgent)startRemote();return 0;
+  case WM_CLOSE:if(!closing&&config.contains("pairing")&&!busy){ShowWindow(hwnd,SW_HIDE);return 0;}closing=true;cameraAllowed=false;visibleIndicator=nullptr;remoteAgent.reset();if(cameraIndicator){DestroyWindow(cameraIndicator);cameraIndicator=nullptr;}trace("app_stopped");cancel=true;if(auto p=active.load())p->cancel();if(worker.joinable())worker.join();DestroyWindow(hwnd);return 0;
+  case WM_DESTROY:KillTimer(hwnd,1);if(sessionNotifications)WTSUnRegisterSessionNotification(hwnd);Shell_NotifyIconW(NIM_DELETE,&tray);if(titleFont)DeleteObject(titleFont);if(smallFont)DeleteObject(smallFont);if(font)DeleteObject(font);PostQuitMessage(0);return 0;
+  default:return DefWindowProcW(hwnd,msg,wp,lp);}return DefWindowProcW(hwnd,msg,wp,lp);}
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
   bool cli=false;
@@ -169,7 +202,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
   try{int argc=0;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);std::vector<std::string> args;for(int i=1;i<argc;i++)args.push_back(utf8(argv[i]));LocalFree(argv);
     stateDir=std::filesystem::current_path()/L".runtime";
     for(size_t i=0;i<args.size();i++)if(args[i]=="--state"&&i+1<args.size()){stateDir=std::filesystem::absolute(wide(args[i+1]));args.erase(args.begin()+i,args.begin()+i+2);break;}
-    cli=!args.empty();std::filesystem::create_directories(stateDir);auto file=stateDir/L"windows-config.dpapi";
+    if(args.size()==1&&args[0]=="--startup"){startupLaunch=true;args.clear();}cli=!args.empty();std::filesystem::create_directories(stateDir);auto file=stateDir/L"windows-config.dpapi";
     if(args.size()==4&&args[0]=="--init"){
       if(std::filesystem::exists(file))throw std::runtime_error("Configuration already exists");wchar_t host[256];DWORD n=256;GetComputerNameW(host,&n);auto id=uuid();SigningKey key(id,true);
       Json c{{"id",id},{"name",utf8(host)},{"accountBindingId",uuid()},{"relayUrl",args[1]},{"tlsPin",args[2]},{"caPem",read(wide(args[3]))}};Http(c.at("relayUrl"),c.at("tlsPin"),"");save(file,c);return 0;
@@ -181,7 +214,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     if(args.size()==1&&args[0]=="--health"){relay().call("GET","/health");return 0;}
     if(args.size()==2&&args[0]=="--diagnostics"){
       sessionKnown=ProcessIdToSessionId(GetCurrentProcessId(),&sessionId)!=FALSE;const auto locked=actualSessionLocked();bool healthy=false;try{healthy=relay().call("GET","/health").value("status",std::string())=="ok";}catch(...){}
-      Json report{{"mode","desktop-approval-only"},{"windowsUnlockImplemented",false},{"credentialProviderImplemented",false},{"paired",config.contains("pairing")},{"transportConfigured",config.contains("transportToken")},{"relayHealthy",healthy},{"lockPromptsEnabled",config.value("lockPromptsEnabled",false)},{"localConsoleSession",sessionKnown&&WTSGetActiveConsoleSessionId()==sessionId},{"sessionStateAvailable",locked.has_value()}};write(wide(args[1]),report.dump(2));return 0;
+      Json report{{"mode","desktop-approval-only"},{"windowsUnlockImplemented",true},{"credentialProviderImplemented",true},{"nativeServiceRunning",nativeServiceRunning()},{"cameraSharingEnabled",config.value("cameraSharingEnabled",false)},{"serverDiagnosticsEnabled",config.value("serverDiagnosticsEnabled",true)},{"paired",config.contains("pairing")},{"transportConfigured",config.contains("transportToken")},{"relayHealthy",healthy},{"lockPromptsEnabled",config.value("lockPromptsEnabled",false)},{"localConsoleSession",sessionKnown&&WTSGetActiveConsoleSessionId()==sessionId},{"sessionStateAvailable",locked.has_value()}};write(wide(args[1]),report.dump(2));return 0;
     }
     if(!args.empty())throw std::runtime_error("Unknown arguments");
     // One companion per identity/session prevents duplicate automatic notifications.
@@ -190,7 +223,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     if(!instanceHandle.value)throw std::runtime_error("Instance unavailable");
     if(GetLastError()==ERROR_ALREADY_EXISTS)return 0;
     sessionKnown=ProcessIdToSessionId(GetCurrentProcessId(),&sessionId)!=FALSE;
-    WNDCLASSW wc{};wc.lpfnWndProc=proc;wc.hInstance=instance;wc.lpszClassName=L"PhoneUnlockDesktop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);RegisterClassW(&wc);
-    auto h=CreateWindowW(wc.lpszClassName,L"WINDOWS-UNLOCK for Windows 11",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,CW_USEDEFAULT,CW_USEDEFAULT,740,700,nullptr,nullptr,instance,nullptr);if(!h)throw std::runtime_error("Window unavailable");ShowWindow(h,show);MSG msg;while(GetMessageW(&msg,nullptr,0,0)>0){if(!IsDialogMessageW(h,&msg)){TranslateMessage(&msg);DispatchMessageW(&msg);}}return 0;
+    telemetry=std::make_shared<Telemetry>(config,stateDir);trace("app_started");trace(nativeServiceRunning()?"native_ready":"native_unavailable");
+    WNDCLASSW wc{};wc.lpfnWndProc=proc;wc.hInstance=instance;wc.lpszClassName=L"PhoneUnlockDesktop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hbrBackground=background;RegisterClassW(&wc);WNDCLASSW cameraClass=wc;cameraClass.lpfnWndProc=[](HWND h,UINT m,WPARAM w,LPARAM l)->LRESULT{if(m==WM_CREATE){auto text=CreateWindowW(L"STATIC",L"Live preview is sharing with your paired phone.\nStops after 60 seconds. No recording is stored.",WS_CHILD|WS_VISIBLE,18,16,440,52,h,nullptr,GetModuleHandleW(nullptr),nullptr);SendMessageW(text,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);auto stop=CreateWindowW(L"BUTTON",L"Stop sharing",WS_CHILD|WS_VISIBLE|WS_TABSTOP,18,82,200,36,h,reinterpret_cast<HMENU>(1),GetModuleHandleW(nullptr),nullptr);SendMessageW(stop,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);return 0;}if(m==WM_CLOSE||(m==WM_COMMAND&&LOWORD(w)==1)){cameraAllowed=false;visibleIndicator=nullptr;if(busy)pendingCameraRevoke=true;else{config["cameraSharingEnabled"]=false;persist();}SendMessageW(cameraCheck,BM_SETCHECK,BST_UNCHECKED,0);DestroyWindow(h);cameraIndicator=nullptr;return 0;}if(m==WM_CTLCOLORSTATIC){SetTextColor(reinterpret_cast<HDC>(w),RGB(220,231,246));SetBkColor(reinterpret_cast<HDC>(w),RGB(16,23,35));return reinterpret_cast<LRESULT>(background);}return DefWindowProcW(h,m,w,l);};cameraClass.lpszClassName=L"WindowsUnlockCameraIndicator";RegisterClassW(&cameraClass);
+    auto h=CreateWindowW(wc.lpszClassName,L"WINDOWS-UNLOCK for Windows 11",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,CW_USEDEFAULT,CW_USEDEFAULT,760,810,nullptr,nullptr,instance,nullptr);if(!h)throw std::runtime_error("Window unavailable");ShowWindow(h,show);MSG msg;while(GetMessageW(&msg,nullptr,0,0)>0){if(!IsDialogMessageW(h,&msg)){TranslateMessage(&msg);DispatchMessageW(&msg);}}return 0;
   }catch(...){if(!cli)MessageBoxW(nullptr,L"Setup or operation failed. Follow docs/setup.md.\nWindows PIN and password remain unchanged.",L"WINDOWS-UNLOCK",MB_OK|MB_ICONERROR);return 1;}
 }

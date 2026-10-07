@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <memory>
 namespace pu {
 using Json = nlohmann::json;
 using Bytes = std::vector<unsigned char>;
@@ -47,6 +48,7 @@ public:
   void cancel(){pending_.store(false);}
 };
 class Http {
+  struct Connection;std::shared_ptr<Connection> connection_;
   std::wstring host_; INTERNET_PORT port_{}; std::wstring prefix_; std::string pin_; std::string token_;
 public:
   Http(const std::string& url, const std::string& pin, const std::string& token);

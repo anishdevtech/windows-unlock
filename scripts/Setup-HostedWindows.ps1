@@ -85,6 +85,7 @@ foreach($taskShortcutPath in $taskShortcutPaths) {
   $taskShortcut=$taskShell.CreateShortcut($taskShortcutPath)
   $taskShortcut.TargetPath=$taskExe
   $taskShortcut.Arguments='--state "'+$taskState+'"'
+  if((Split-Path -Parent $taskShortcutPath) -eq [Environment]::GetFolderPath('Startup')){$taskShortcut.Arguments+=' --startup'}
   $taskShortcut.WorkingDirectory=Split-Path -Parent $taskExe
   $taskShortcut.Description='WINDOWS-UNLOCK hosted desktop companion; Windows PIN remains available.'
   $taskShortcut.Save()

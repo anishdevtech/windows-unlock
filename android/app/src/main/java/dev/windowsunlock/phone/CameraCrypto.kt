@@ -9,6 +9,15 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 object CameraCrypto {
+    fun verifyEnvelope(frame: org.json.JSONObject, windowsJwk: org.json.JSONObject, windowsId: String, phoneId: String, pairingId: String, cameraId: String, commandHash: String): String {
+        require(commandHash.isNotEmpty())
+        val token = frame.getString("envelopeJws")
+        val e = Protocol.verify(token, windowsJwk, "camera-envelope")
+        require(e.length() == 9 && e.getString("cameraId") == cameraId && e.getString("commandHash") == commandHash &&
+            e.getString("windowsDeviceId") == windowsId && e.getString("androidDeviceId") == phoneId &&
+            e.getString("pairingId") == pairingId && e.getString("keyHash") == Protocol.hash(frame.getString("wrappedKey")))
+        return token
+    }
     fun unwrap(key: PrivateKey, wrapped: ByteArray): ByteArray {
         require(wrapped.size == 256)
         val rsa = Cipher.getInstance("RSA/ECB/OAEPPadding")

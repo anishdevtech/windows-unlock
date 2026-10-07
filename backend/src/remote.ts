@@ -19,7 +19,7 @@ export function remoteRoutes(app:FastifyInstance,store:Store,device:Device) {
     return {published:true};
   }));
   app.get('/v1/remote/offer',async req=>{
-    const a=await device(req,'android');const rows=await store.find('remote_offers','androidDeviceId',a.id);
+    const a=await device(req,'android');const rows=await store.pending('remote_offers','androidDeviceId',a.id);
     const r=rows.find(r=>r.state==='pending'&&r.expiresAt>now());
     if(!r)return {};
     await paired(r.windowsDeviceId,a.id,r.pairingId,store);return {offerJws:r.offerJws};
@@ -41,7 +41,7 @@ export function remoteRoutes(app:FastifyInstance,store:Store,device:Device) {
     return {commandId:p.commandId,state:'pending'};
   }));
   app.get('/v1/remote/commands/pending',async req=>{
-    const w=await device(req,'windows');const rows=await store.find('remote_commands','windowsDeviceId',w.id);
+    const w=await device(req,'windows');const rows=await store.pending('remote_commands','windowsDeviceId',w.id);
     return {commands:rows.filter(r=>r.state==='pending'&&r.expiresAt>now()).map(r=>({commandJws:r.commandJws}))};
   });
   app.get('/v1/remote/commands/:id',async req=>{
@@ -60,17 +60,20 @@ export function remoteRoutes(app:FastifyInstance,store:Store,device:Device) {
   app.post('/v1/camera/:id/frame',async req=>store.transaction(async s=>{
     const w=await device(req,'windows',s);const id=(req.params as any).id;requireThat(uuid(id));const c=await s.get('remote_commands',id);
     requireThat(c&&c.windowsDeviceId===w.id&&c.action==='camera-start'&&c.viewerUntil>now(),'stream_unavailable',410);await paired(w.id,c.androidDeviceId,c.pairingId,s);
-    const b=req.body as any;requireThat(Object.keys(b).sort().join(',')==='ciphertext,iv,sequence,wrappedKey');
+    const b=req.body as any;requireThat(Object.keys(b).sort().join(',')==='ciphertext,envelopeJws,iv,sequence,wrappedKey');
     requireThat(Number.isSafeInteger(b.sequence)&&b.sequence>0&&b.sequence<=120);
     for(const [field,min,max] of [['iv',12,12],['wrappedKey',256,256],['ciphertext',17,45016]] as const) {
       const value=b[field];requireThat(typeof value==='string'&&/^[A-Za-z0-9_-]+$/.test(value));const bytes=Buffer.from(value,'base64url');requireThat(bytes.length>=min&&bytes.length<=max&&bytes.toString('base64url')===value);
     }
-    const prev=await s.get('camera_frames',id);requireThat(!prev||b.sequence>prev.sequence,'replayed_frame',409);
+    const envelope=await verified(b.envelopeJws,w.jwk,'camera-envelope');
+    fields(envelope,['cameraId','commandHash','windowsDeviceId','androidDeviceId','pairingId','keyHash']);
+    requireThat(envelope.cameraId===id&&envelope.commandHash===hash(c.commandJws)&&envelope.windowsDeviceId===w.id&&envelope.androidDeviceId===c.androidDeviceId&&envelope.pairingId===c.pairingId&&envelope.keyHash===hash(b.wrappedKey),'invalid_envelope');
+    const prev=await s.get('camera_frames',id);requireThat(!prev||prev.envelopeJws===b.envelopeJws,'invalid_envelope');requireThat(!prev||b.sequence>prev.sequence,'replayed_frame',409);
     await s.put('camera_frames',id,{id,...b,windowsDeviceId:w.id,androidDeviceId:c.androidDeviceId,pairingId:c.pairingId,expiresAt:c.viewerUntil});return {stored:true};
   }));
   app.get('/v1/camera/:id/frame',async req=>{
     const a=await device(req,'android');const id=(req.params as any).id;requireThat(uuid(id));const r=await store.get('camera_frames',id);
     if(!r)return {};requireThat(r.androidDeviceId===a.id,'forbidden',403);requireThat(r.expiresAt>now(),'expired',410);await paired(r.windowsDeviceId,a.id,r.pairingId,store);
-    return {sequence:r.sequence,iv:r.iv,ciphertext:r.ciphertext,wrappedKey:r.wrappedKey};
+    return {sequence:r.sequence,iv:r.iv,ciphertext:r.ciphertext,wrappedKey:r.wrappedKey,envelopeJws:r.envelopeJws};
   });
 }

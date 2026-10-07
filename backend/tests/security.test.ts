@@ -18,7 +18,8 @@ async function fixture(t:TestContext,push?:import('../src/push.js').PushSender){
   if(db){assert.match(new URL(db).pathname,/_test$/,'Refuse to clear a non-test database');pool=new Pool({connectionString:db});
     await pool.query(readFileSync(new URL('../migrations/001_initial.sql',import.meta.url),'utf8'));
     await pool.query(readFileSync(new URL('../migrations/002_remote.sql',import.meta.url),'utf8'));
-    await pool.query('TRUNCATE users,windows_devices,android_devices,device_pairings,pairing_sessions,authentication_requests,authentication_events,remote_offers,remote_commands,camera_frames,rate_limits');store=new PgStore(pool);
+    await pool.query(readFileSync(new URL('../migrations/003_diagnostics.sql',import.meta.url),'utf8'));
+    await pool.query('TRUNCATE users,windows_devices,android_devices,device_pairings,pairing_sessions,authentication_requests,authentication_events,remote_offers,remote_commands,camera_frames,rate_limits,diagnostic_logs');store=new PgStore(pool);
   }
   const app=createApp(store,undefined,push);t.after(async()=>{await app.close();await pool?.end();});
   const w=await key(),approval=await key(),identity=await key();const wid=randomUUID(),aid=randomUUID(),pair=randomUUID(),sid=randomUUID();const wt=transport(),at=transport(),pt=transport();
@@ -43,6 +44,20 @@ test('bilateral pairing and valid approval delivery; duplicate is rejected',asyn
   const responseJws=await f.response(r);const url=`/v1/authentication-requests/${r.p.requestId}/responses`;
   assert.equal((await f.call('POST',url,f.at,{responseJws})).statusCode,200);assert.equal((await f.call('POST',url,f.at,{responseJws})).statusCode,409);
   assert.equal((await f.call('GET',`/v1/authentication-requests/${r.p.requestId}`,f.wt)).json().state,'response_received');
+});
+test('signed diagnostics stay bounded, idempotent, scoped and secret-free',async t=>{
+  const f=await fixture(t);const e={id:randomUUID(),timestamp:now(),code:'camera_failed',level:'warning',requestId:null,durationMs:15};
+  const oldId=randomUUID();await f.store.put('diagnostic_logs',oldId,{...e,id:oldId,windowsDeviceId:f.wid,timestamp:now()-700000});
+  const batch=async(entries:any[],id=f.wid)=>sign(f.w,message('diagnostic-batch',{batchId:randomUUID(),windowsDeviceId:id,issuedAt:now(),expiresAt:now()+300,entries}));
+  const body={batchJws:await batch([e])};assert.equal((await f.call('POST','/v1/diagnostics',f.wt,body)).statusCode,200);
+  assert.equal((await f.call('POST','/v1/diagnostics',f.wt,body)).statusCode,200);assert.equal((await f.store.all('diagnostic_logs')).length,1);
+  assert.equal((await f.call('GET','/v1/diagnostics',f.at)).json().entries[0].code,'camera_failed');
+  assert.equal((await f.call('GET','/v1/diagnostics',transport())).statusCode,401);
+  assert.equal((await f.call('POST','/v1/diagnostics',f.at,body)).statusCode,401);
+  for(const entries of [[{...e,password:'secret'}],[{...e,code:'Bearer secret'}],[{...e,timestamp:now()-700000}],Array(51).fill(e),[]])assert.equal((await f.call('POST','/v1/diagnostics',f.wt,{batchJws:await batch(entries)})).statusCode,400);
+  assert.equal((await f.call('POST','/v1/diagnostics',f.wt,{batchJws:await batch([e],randomUUID())})).statusCode,400);
+  assert.equal((await f.call('GET','/v1/device-status',f.wt)).json().pushTokenRegistered,false);
+  await f.call('DELETE',`/v1/device-pairings/${f.pair}`,f.wt);assert.equal((await f.call('GET','/v1/diagnostics',f.at)).statusCode,401);
 });
 test('denial uses identity key; that key cannot approve',async t=>{
   const f=await fixture(t),r=await f.challenge();await r.send();const url=`/v1/authentication-requests/${r.p.requestId}/responses`;
@@ -131,9 +146,13 @@ test('camera relay validates encrypted frames, recipient, counter and revocation
   const f=await fixture(t),r=await remote(f);await r.send();
   const rsa=await generateKeyPair('RSA-OAEP-256',{modulusLength:2048,extractable:true});const full=await exportJWK(rsa.publicKey);const viewerJwk={kty:full.kty,n:full.n,e:full.e};
   const commandJws=await r.command('camera-start',{viewerJwk});const c=(await f.call('POST','/v1/remote/commands',f.at,{commandJws})).json();assert.ok(c.commandId);
-  const frame={sequence:1,iv:randomBytes(12).toString('base64url'),wrappedKey:randomBytes(256).toString('base64url'),ciphertext:randomBytes(100).toString('base64url')};const url=`/v1/camera/${c.commandId}/frame`;
+  const wrappedKey=randomBytes(256).toString('base64url');
+  const envelope=message('camera-envelope',{cameraId:c.commandId,commandHash:hash(commandJws),windowsDeviceId:f.wid,androidDeviceId:f.aid,pairingId:f.pair,keyHash:hash(wrappedKey)});
+  const frame={sequence:1,iv:randomBytes(12).toString('base64url'),wrappedKey,ciphertext:randomBytes(100).toString('base64url'),envelopeJws:await sign(f.w,envelope)};const url=`/v1/camera/${c.commandId}/frame`;
   assert.equal((await f.call('POST',url,f.at,frame)).statusCode,401);
   assert.equal((await f.call('POST',url,f.wt,{...frame,plaintext:'not permitted'})).statusCode,400);
+  assert.equal((await f.call('POST',url,f.wt,{...frame,envelopeJws:await sign(f.identity,envelope)})).statusCode,400);
+  assert.equal((await f.call('POST',url,f.wt,{...frame,wrappedKey:randomBytes(256).toString('base64url')})).statusCode,400);
   assert.equal((await f.call('POST',url,f.wt,frame)).statusCode,200);assert.equal((await f.call('POST',url,f.wt,frame)).statusCode,409);
   assert.deepEqual((await f.call('GET',url,f.at)).json(),frame);
   assert.equal((await f.call('GET',url,f.wt)).statusCode,401);

@@ -137,21 +137,44 @@ accepted. A signed remote-result binds commandId, commandHash, result, timestamp
 accepted means the companion accepted the request, not proof the OS completed a
 shutdown/sleep/restart. The OS may refuse the requested operation.
 
-## Live camera envelope (v0.2)
+## Live camera envelope (v0.4)
 
 camera-start includes a public-only 2048-bit RSA JWK (kty,n,e) from a temporary
 Android Keystore key. It is covered by the phone's approval-key signature. Windows
-requires explicit local camera permission, visible companion window and unlocked
-interactive session. Camera watchdog checks local permission/visibility/lock state
+requires explicit local camera permission, a separate visible sharing indicator and
+an unlocked interactive session. The companion itself may be in the tray. Camera
+watchdog checks local permission/indicator visibility/lock state
 and shuts down the media source independently of relay polling/network stalls.
 
 Windows generates random 32-byte AES key. RSA-OAEP with SHA256 and MGF1-SHA256 wraps
 the key. Frames use AES-256-GCM, random 12-byte IV, 16-byte tag appended to ciphertext,
 AAD UTF8(commandId + ':' + decimal sequence). Sequence starts at 1, increases and
-never exceeds 120 per 60s session. Envelope fields: sequence, iv, ciphertext, wrappedKey;
+never exceeds 120 per 60s session. Frame fields: sequence, iv, ciphertext, wrappedKey, envelopeJws;
 all binary values canonical base64url. Max JPEG plaintext 45000 bytes, output 320x240.
 Android verifies GCM before image parsing and refuses duplicate sequence numbers.
+Before unwrapping the AES key, Android verifies envelopeJws against the pinned
+Windows identity key. Its signed payload has v=1, purpose=desktop-approval,
+type=camera-envelope and exactly cameraId, commandHash, windowsDeviceId,
+androidDeviceId, pairingId, keyHash. cameraId equals commandId; commandHash is the
+SHA-256 hex hash of the exact phone command JWS; keyHash is the SHA-256 hex hash of
+the canonical base64url wrappedKey string. All identity fields match the local
+pairing and command. Every frame in a session carries the same envelope token.
+The relay validates the envelope too, but Android performs its own verification;
+relay compromise cannot replace the session key with one chosen by the server.
 Raw video, AES keys, private keys and unencrypted frames are never relayed. No audio
 or video file is recorded. One latest encrypted frame is stored in PostgreSQL until
 expiry/pruning; backups have their own retention. Viewer keys are removed on normal
 closure and orphaned viewer aliases cleared on activity restart.
+
+## Application diagnostics (v0.4)
+
+Windows POSTs /v1/diagnostics with its scoped transport token and a Windows-signed
+diagnostic-batch JWS. Payload fields beyond the three protocol fields are batchId,
+windowsDeviceId, issuedAt, expiresAt (maximum 300 seconds), entries (1–50).
+Each entry contains exactly id (UUID), timestamp (Unix seconds), code (fixed
+allowlist), level (info/warning/error), requestId (UUID or null), durationMs
+(integer 0–300000 or null). Entries older than seven days or more than 30 seconds
+in the future are rejected. The server records entries idempotently by ID and
+returns metadata only to the Android device in the active pairing. No free-text
+logs, credentials, keys or camera images are accepted. These diagnostics are
+informational; they never constitute an approval or authorize Windows sign-in.

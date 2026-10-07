@@ -47,17 +47,17 @@ Json encryptCameraFrame(const Bytes& secret,const Bytes& jpeg,const std::string&
   ok(BCryptEncrypt(key.h,const_cast<PUCHAR>(jpeg.data()),ULONG(jpeg.size()),&info,nullptr,0,encrypted.data(),ULONG(jpeg.size()),&count,0));encrypted.resize(count);encrypted.insert(encrypted.end(),tag.begin(),tag.end());
   return {{"sequence",seq},{"iv",b64url(iv)},{"ciphertext",b64url(encrypted)},{"wrappedKey",b64url(wrapped)}};
 }
-RemoteAgent::RemoteAgent(Json config,std::function<void(std::string)> notify,std::function<bool()> cameraPermitted){
-  thread_=std::jthread([config=std::move(config),notify=std::move(notify),cameraPermitted=std::move(cameraPermitted)](std::stop_token stop){
+RemoteAgent::RemoteAgent(Json config,std::function<void(std::string)> notify,std::function<bool()> cameraPermitted,std::function<bool(bool)> cameraDisclosure,std::function<bool()> cameraIndicatorVisible,std::function<void(const char*)> trace){
+  thread_=std::jthread([config=std::move(config),notify=std::move(notify),cameraPermitted=std::move(cameraPermitted),cameraDisclosure=std::move(cameraDisclosure),cameraIndicatorVisible=std::move(cameraIndicatorVisible),trace=std::move(trace)](std::stop_token stop){
     CoInitializeEx(nullptr,COINIT_MULTITHREADED);
     try{
       auto pair=config.at("pairing");SigningKey signer(config.at("id"));Http relay(config.at("relayUrl"),config.at("tlsPin"),config.at("transportToken"));
-      Json offer;std::string offerToken;bool pending=false;auto deadline=std::chrono::steady_clock::now();std::unique_ptr<RemoteLease> lease;
-      std::unique_ptr<Camera> camera;Bytes secret,wrapped;std::string cameraId;uint64_t sequence=0;auto cameraDeadline=deadline;
-      auto stopCamera=[&]{const bool wasActive=bool(camera);camera.reset();if(!secret.empty())SecureZeroMemory(secret.data(),secret.size());secret.clear();wrapped.clear();if(wasActive)notify("Camera stopped. Remote controls remain available.");};
+      Json offer;std::string offerToken;bool pending=false;auto deadline=std::chrono::steady_clock::now();std::unique_ptr<RemoteLease> lease;bool networkFailed=false,readyReported=false;unsigned retrySeconds=1;auto nextCommands=deadline;
+      std::unique_ptr<Camera> camera;Bytes secret,wrapped;std::string cameraId,envelopeJws;bool disclosed=false;uint64_t sequence=0;auto cameraDeadline=deadline;
+      auto stopCamera=[&]{const bool wasActive=bool(camera),hadKey=!secret.empty(),hadDisclosure=disclosed;disclosed=false;camera.reset();if(!secret.empty())SecureZeroMemory(secret.data(),secret.size());secret.clear();wrapped.clear();if(wasActive||hadKey||hadDisclosure)cameraDisclosure(false);if(wasActive)trace("camera_stopped");if(wasActive)notify("Camera stopped. Remote controls remain available.");};
       while(!stop.stop_requested()){
         try{
-          if(camera&&(!cameraPermitted()||!sessionUnlocked()||std::chrono::steady_clock::now()>=cameraDeadline))stopCamera();
+          if(camera&&(!cameraPermitted()||!cameraIndicatorVisible()||!sessionUnlocked()||std::chrono::steady_clock::now()>=cameraDeadline))stopCamera();
           Json actions=Json::array();
             if(config.value("remotePowerEnabled",false))for(const auto* a:{"lock","sleep","shutdown","restart"})actions.push_back(a);
             if(config.value("cameraSharingEnabled",false)&&cameraPermitted()&&sessionUnlocked())actions.push_back("camera-start");actions.push_back("camera-stop");
@@ -66,11 +66,11 @@ RemoteAgent::RemoteAgent(Json config,std::function<void(std::string)> notify,std
             offer.update({{"offerId",uuid()},{"windowsDeviceId",config.at("id")},{"androidDeviceId",pair.at("androidDeviceId")},{"pairingId",pair.at("id")},{"nonce",b64url(random(32))},{"issuedAt",issued},{"expiresAt",issued+60},{"actions",actions}});
             pending=false;offerToken=signer.sign(offer);deadline=std::chrono::steady_clock::now()+std::chrono::seconds(60);lease=std::make_unique<RemoteLease>(offer,offerToken,pair,deadline);Json body{{"offerJws",offerToken}};relay.call("POST","/v1/remote/offers",&body);pending=true;
           }
-          const auto rows=relay.call("GET","/v1/remote/commands/pending");
+          Json rows{{"commands",Json::array()}};if(!camera||std::chrono::steady_clock::now()>=nextCommands){rows=relay.call("GET","/v1/remote/commands/pending");nextCommands=std::chrono::steady_clock::now()+std::chrono::seconds(1);}
           for(const auto& row:rows.at("commands")){
             const auto token=row.at("commandJws").get<std::string>();
             if(!pending||!lease||stop.stop_requested())continue;Json command;try{command=lease->consume(token);}catch(...){continue;}
-            const auto action=command.at("action").get<std::string>();
+            const auto action=command.at("action").get<std::string>();trace("remote_received");
             // Consume the local lease before any OS action; never restore it from the relay.
             pending=false;const auto id=command.at("commandId").get<std::string>();const auto result=[&](const char* value){auto p=message("remote-result");p.update({{"commandId",id},{"commandHash",hash(token)},{"result",value},{"timestamp",epoch()}});if(config.contains("historyFile")){std::ofstream log(wide(config.at("historyFile")),std::ios::app);log<<Json{{"timestamp",epoch()},{"device",config.at("id")},{"requestId",id},{"action",action},{"result",value},{"snapshotPath",nullptr}}.dump()<<'\n';}Json b{{"resultJws",signer.sign(p)}};try{relay.call("POST","/v1/remote/commands/"+id+"/result",&b);}catch(...){};};
             try{
@@ -78,13 +78,15 @@ RemoteAgent::RemoteAgent(Json config,std::function<void(std::string)> notify,std
               if(action=="camera-stop"){stopCamera();result("accepted");continue;}
               if(action=="camera-start"){
                 if(!cameraPermitted()||!sessionUnlocked())throw std::runtime_error("Camera permission removed");stopCamera();
-                secret=random(32);wrapped=wrapCameraKey(command.at("viewerJwk"),secret);cameraDeadline=std::chrono::steady_clock::now()+std::chrono::seconds(60);camera=std::make_unique<Camera>(cameraDeadline,[&]{return cameraPermitted()&&sessionUnlocked()&&!stop.stop_requested();});cameraId=id;sequence=0;notify("CAMERA STREAMING TO YOUR PHONE — stops after 60 seconds.\nDisable Camera sharing here to stop.");result("accepted");
+                if(!cameraDisclosure(true))throw std::runtime_error("Visible camera indicator unavailable");disclosed=true;
+                secret=random(32);wrapped=wrapCameraKey(command.at("viewerJwk"),secret);auto envelope=message("camera-envelope");envelope.update({{"cameraId",id},{"commandHash",hash(token)},{"windowsDeviceId",config.at("id")},{"androidDeviceId",pair.at("androidDeviceId")},{"pairingId",pair.at("id")},{"keyHash",hash(b64url(wrapped))}});envelopeJws=signer.sign(envelope);cameraDeadline=std::chrono::steady_clock::now()+std::chrono::seconds(60);camera=std::make_unique<Camera>(cameraDeadline,[&]{return cameraPermitted()&&cameraIndicatorVisible()&&sessionUnlocked()&&!stop.stop_requested();});cameraId=id;sequence=0;trace("camera_started");notify("CAMERA STREAMING TO YOUR PHONE — stops after 60 seconds.\nDisable Camera sharing here to stop.");result("accepted");
               }else {if(command.at("viewerJwk")!=nullptr)throw std::runtime_error("Unexpected camera key");stopCamera();result("accepted");notify("Phone approved laptop action: "+action);power(action);}
-            }catch(...){stopCamera();result("failed");notify("Remote action unavailable. Check local permissions or camera access.");}
+            }catch(...){trace(action=="camera-start"?"camera_failed":"remote_failed");stopCamera();result("failed");notify("Remote action unavailable. Check local permissions or camera access.");}
           }
-          if(camera){auto jpeg=camera->frame();if(!cameraPermitted()||!sessionUnlocked()||stop.stop_requested()||std::chrono::steady_clock::now()>=cameraDeadline){stopCamera();continue;}auto body=encryptCameraFrame(secret,jpeg,cameraId,++sequence,wrapped);relay.call("POST","/v1/camera/"+cameraId+"/frame",&body);}
-        }catch(...){stopCamera();/* fail closed, retry bounded networking without logging secrets */}
-        for(int n=0;n<5&&!stop.stop_requested();n++)std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          if(camera){auto jpeg=camera->frame();if(!cameraPermitted()||!cameraIndicatorVisible()||!sessionUnlocked()||stop.stop_requested()||std::chrono::steady_clock::now()>=cameraDeadline){stopCamera();continue;}auto body=encryptCameraFrame(secret,jpeg,cameraId,++sequence,wrapped);body["envelopeJws"]=envelopeJws;relay.call("POST","/v1/camera/"+cameraId+"/frame",&body);}
+          if(!readyReported||networkFailed){trace("relay_ready");readyReported=true;networkFailed=false;notify(camera?"Camera streaming • local Stop sharing button remains available.":"Phone controls online • camera sharing requires local permission and an unlocked session.");}retrySeconds=1;
+        }catch(...){if(!networkFailed){trace("relay_unavailable");networkFailed=true;}if(camera)trace("camera_failed");stopCamera();notify("Connection or camera unavailable. Check Windows camera privacy and the server logs.");/* fail closed, retry bounded networking without logging secrets */}
+        for(unsigned n=0;n<(networkFailed?retrySeconds*10:5)&&!stop.stop_requested();n++)std::this_thread::sleep_for(std::chrono::milliseconds(100));if(networkFailed)retrySeconds=std::min<unsigned>(15,retrySeconds*2);
       }
       stopCamera();
     }catch(...){notify("Remote controls unavailable. Windows PIN remains unchanged.");}

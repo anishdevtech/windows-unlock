@@ -4,7 +4,7 @@ dependencyLocking { lockAllConfigurations() }
 android {
     namespace = "dev.windowsunlock.phone"
     compileSdk = 36
-    defaultConfig { applicationId = "dev.windowsunlock.phone"; minSdk = 30; targetSdk = 36; versionCode = 3; versionName = "0.3.0" }
+    defaultConfig { applicationId = "dev.windowsunlock.phone"; minSdk = 30; targetSdk = 36; versionCode = 4; versionName = "0.4.0" }
     buildFeatures { compose = true; buildConfig = true }
     buildTypes {
         debug { buildConfigField("boolean", "ALLOW_SOFTWARE_KEYS", providers.gradleProperty("phoneunlock.allowSoftwareKeys").orElse("false").get()) }

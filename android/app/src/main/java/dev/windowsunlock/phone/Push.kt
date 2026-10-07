@@ -74,7 +74,8 @@ class PushRegistration(context: Context, parameters: WorkerParameters) : Corouti
                 .put("nonce", Protocol.b64(ByteArray(32).also { SecureRandom().nextBytes(it) })).put("issuedAt", now).put("expiresAt", now + 300)
             val jws = Protocol.sign(Protocol.input(p), Keys.signature(c.getString("identityAlias")))
             Relay(c, c.getString("transportToken")).call("POST", "/v1/android/push-token", org.json.JSONObject().put("registrationJws", jws))
+            applicationContext.getSharedPreferences("push-health", Context.MODE_PRIVATE).edit().putBoolean("registered", true).putLong("registeredAt", now).apply()
             Result.success()
-        } catch (_: Exception) { if (runAttemptCount < 5) Result.retry() else Result.failure() }
+        } catch (_: Exception) { applicationContext.getSharedPreferences("push-health", Context.MODE_PRIVATE).edit().putBoolean("registered", false).apply(); if (runAttemptCount < 5) Result.retry() else Result.failure() }
     }
 }

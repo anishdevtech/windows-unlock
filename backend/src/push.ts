@@ -1,5 +1,11 @@
 import { initializeApp, cert, applicationDefault, getApps } from 'firebase-admin/app';
-import { getMessaging } from 'firebase-admin/messaging';
+import { getMessaging,type Message } from 'firebase-admin/messaging';
+export function approvalPushPayload(token:string,requestId:string,expiresAt:number):Message {
+  const ttl=Math.max(0,Math.min(60000,(expiresAt-Math.floor(Date.now()/1000))*1000));
+  return {token,notification:{title:'Windows login request',body:'Tap to review your laptop request and authenticate securely.'},
+    data:{kind:'approval',requestId,approvalRequestId:requestId,expiresAt:String(expiresAt)},
+    android:{priority:'high',ttl,restrictedPackageName:'dev.windowsunlock.phone',notification:{channelId:'approval_requests_v1',icon:'ic_notification',tag:requestId,visibility:'private',defaultSound:true}}};
+}
 export interface PushSender { send(token:string,requestId:string,expiresAt:number):Promise<void>; }
 export function firebasePush(env:NodeJS.ProcessEnv=process.env,report:(message:string)=>void=message=>console.warn(message)):PushSender|undefined {
   const projectId=env.FIREBASE_PROJECT_ID?.trim();
@@ -34,8 +40,7 @@ export function firebasePush(env:NodeJS.ProcessEnv=process.env,report:(message:s
     const ttl=Math.max(0,Math.min(60000,(expiresAt-Math.floor(Date.now()/1000))*1000));
     if(ttl<=0)return;
     let timeout:ReturnType<typeof setTimeout>|undefined;
-    try {await Promise.race([getMessaging(app).send({token,data:{kind:'approval',requestId,expiresAt:String(expiresAt)},
-      android:{priority:'high',ttl,restrictedPackageName:'dev.windowsunlock.phone'}}),
+    try {await Promise.race([getMessaging(app).send(approvalPushPayload(token,requestId,expiresAt)),
       new Promise<never>((_resolve,reject)=>{timeout=setTimeout(()=>reject(new Error('push_timeout')),3500);})]);}
     finally{if(timeout)clearTimeout(timeout);}
   }};

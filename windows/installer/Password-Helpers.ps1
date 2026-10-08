@@ -58,14 +58,7 @@ function Get-PasswordProviderInventory {
     [pscustomobject]@{id=$_.PSChildName;name=$taskKey.GetValue('');disabled=$taskKey.GetValue('Disabled')}
   } | Sort-Object id | ConvertTo-Json -Compress)
 }
-function New-PasswordProtectedDirectory {
-  Assert-PasswordPlainPath (Split-Path -Parent $taskPasswordTarget)
-  New-Item -ItemType Directory -Path $taskPasswordTarget | Out-Null
-  $taskAcl=New-Object Security.AccessControl.DirectorySecurity
-  $taskAcl.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')));$taskAcl.SetAccessRuleProtection($true,$false)
-  foreach($taskSid in @('S-1-5-18','S-1-5-32-544')){$taskAcl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($taskSid)),'FullControl','ContainerInherit,ObjectInherit','None','Allow')))}
-  $taskAcl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-545')),'ReadAndExecute','ContainerInherit,ObjectInherit','None','Allow')))
-  try {
+function Initialize-PasswordAcl {
     # Apply only owner and protected DACL. Do not request SACL/audit privileges.
     if(-not ('WindowsUnlockPasswordAcl' -as [type])){Add-Type -TypeDefinition @'
 using System;
@@ -83,6 +76,16 @@ public static class WindowsUnlockPasswordAcl {
   }
 }
 '@}
+}
+function New-PasswordProtectedDirectory {
+  Assert-PasswordPlainPath (Split-Path -Parent $taskPasswordTarget)
+  New-Item -ItemType Directory -Path $taskPasswordTarget | Out-Null
+  $taskAcl=New-Object Security.AccessControl.DirectorySecurity
+  $taskAcl.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')));$taskAcl.SetAccessRuleProtection($true,$false)
+  foreach($taskSid in @('S-1-5-18','S-1-5-32-544')){$taskAcl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($taskSid)),'FullControl','ContainerInherit,ObjectInherit','None','Allow')))}
+  $taskAcl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-545')),'ReadAndExecute','ContainerInherit,ObjectInherit','None','Allow')))
+  try {
+    Initialize-PasswordAcl
     [WindowsUnlockPasswordAcl]::Apply($taskPasswordTarget,$taskAcl.GetSecurityDescriptorBinaryForm())
     Assert-PasswordTarget
   } catch {

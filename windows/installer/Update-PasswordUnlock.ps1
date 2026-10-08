@@ -49,6 +49,14 @@ try{
   foreach($taskFile in $taskOwnedFiles){Copy-Item -LiteralPath (Join-Path $taskPasswordTarget $taskFile) -Destination (Join-Path $taskBackup $taskFile)}
   # The encrypted backup stays in the existing SYSTEM/Administrators-only vault folder.
   Copy-Item -LiteralPath $taskVault -Destination $taskVaultBackup
+  # Copying into a folder can produce an inherited DACL. Protect the backup
+  # explicitly so the previous native build can validate it after rollback too.
+  $taskBackupAcl=New-Object Security.AccessControl.FileSecurity
+  $taskBackupAcl.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))
+  $taskBackupAcl.SetAccessRuleProtection($true,$false)
+  foreach($taskSid in @('S-1-5-18','S-1-5-32-544')){$taskBackupAcl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($taskSid)),'FullControl','Allow')))}
+  Initialize-PasswordAcl
+  [WindowsUnlockPasswordAcl]::Apply($taskVaultBackup,$taskBackupAcl.GetSecurityDescriptorBinaryForm())
   $taskStopped=$true;Stop-Service -Name $taskPasswordService
   (Get-Service -Name $taskPasswordService).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(30))
   Invoke-PasswordNativeCheck (Join-Path $taskStage 'password_ipc_tests.exe') @() 'New V4 IPC checks failed.'
@@ -73,7 +81,7 @@ try{
     try{
       Stop-Service -Name $taskPasswordService -ErrorAction SilentlyContinue
       (Get-Service -Name $taskPasswordService).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(30))
-      if($taskChanged){foreach($taskFile in $taskOwnedFiles){Copy-Item -LiteralPath (Join-Path $taskBackup $taskFile) -Destination (Join-Path $taskPasswordTarget $taskFile) -Force};Copy-Item -LiteralPath $taskVaultBackup -Destination $taskVault -Force}
+      if($taskChanged){foreach($taskFile in $taskOwnedFiles){Copy-Item -LiteralPath (Join-Path $taskBackup $taskFile) -Destination (Join-Path $taskPasswordTarget $taskFile) -Force};Copy-Item -LiteralPath $taskVaultBackup -Destination $taskVault -Force;[WindowsUnlockPasswordAcl]::Apply($taskVault,$taskBackupAcl.GetSecurityDescriptorBinaryForm());Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'PhoneUnlockPasswordCheck.exe') @() 'Previous encrypted vault could not be validated after rollback.'}
       if($taskServiceWasRunning){Start-Service -Name $taskPasswordService;(Get-Service -Name $taskPasswordService).WaitForStatus('Running',[TimeSpan]::FromSeconds(20))}
       Write-Warning 'Previous native build/enrollment restored. Normal PIN/Password remain available.'
     }catch{throw "Update and rollback could not finish. Use normal Windows PIN/Password and Recover-PasswordUnlock.ps1. Protected backups retained at $taskStage and $taskVaultBackup."}

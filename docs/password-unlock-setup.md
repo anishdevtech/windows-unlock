@@ -88,7 +88,10 @@ After any user-selected change, rerun the readiness script and the installer pre
 If still blocked, inspect Code Integrity events for a separate policy instead of
 disabling more security settings. On this laptop, the latest read-only check reports
 Smart App Control **Off** and a successful readiness probe; all three new-mode native
-tests pass. Local enrollment and real sign-in still need to complete.
+tests pass. The user subsequently completed local enrollment and installation.
+The extra tile is registered, its automatic LocalSystem service is running, installed
+binary hashes match, and normal Windows PIN/Password providers remain enabled.
+Actual lock-screen sign-in still needs the acceptance test below.
 
 Sources checked 2026-10-08:
 [Microsoft Smart App Control FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions),

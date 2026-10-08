@@ -8,9 +8,10 @@ The password stays encrypted on the laptop; Android's hardware-backed, per-use
 BiometricPrompt key releases its decryption key only to a fresh laptop request.
 
 **The code and setup tools are built and partially tested; this laptop's Application
-Control policy blocks some unsigned native checks. Actual Winlogon sign-in on the
-personal Microsoft account remains a physical-device acceptance check. The new
-provider is not installed or enrolled yet.** Normal Windows PIN and Password remain
+Control policy previously blocked unsigned native checks; the latest checks pass
+after the user-selected setting change. Actual Winlogon sign-in on the personal
+Microsoft account remains a physical-device acceptance check. The new provider is
+now enrolled and installed on this laptop; its LocalSystem service is running.** Normal Windows PIN and Password remain
 available. The user explicitly accepted local encrypted password storage for this
 alternative; earlier password-free LSA instructions describe a separate legacy mode.
 
@@ -39,7 +40,8 @@ Windows Hello PIN and password remain independent recovery methods. No Windows
 password is sent to the phone/server; no PIN, biometric template, or private Android
 key is transmitted. Password credentials are returned locally to Windows only after
 phone-controlled decryption and are wiped from application buffers.
-No Credential Provider or LSA package has been installed on this laptop.
+The additional 0.5 password Credential Provider is installed on this laptop.
+No custom LSA authentication package was installed.
 
 The older native preview includes a compiled V2 Credential Provider, LocalSystem
 approval-preview service, restricted IPC, protected enrollment staging, and a

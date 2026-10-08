@@ -5,6 +5,13 @@ local masked enrollment, Keystore-gated RSA release, delegated pre-logon request
 relay routes and migration 004, bounded native diagnostics, installer/recovery tools.
 Normal Microsoft providers/LSA security configuration were not changed.
 
+**Latest installed state:** the user completed the local enrollment/setup command.
+Its elevated machine-key, crypto, COM fallback and V3 IPC checks passed. Read-only
+verification confirms the new tile/COM path, `WindowsUnlockPasswordService` running
+as LocalSystem with automatic startup, matching hashes for all seven native payloads,
+and enabled built-in Hello PIN and Password providers. Smart App Control reports Off
+following the user-selected change. No actual lock-screen unlock is claimed yet.
+
 Observed automated results:
 
 - Backend TypeScript build and **38 tests pass**.
@@ -21,9 +28,9 @@ Observed automated results:
   passed. A subsequent bounded run of the added V3 IPC test also passed. The current
   three new-mode checks (vault crypto/packing, provider fallback, V3 IPC) pass.
   A later run after the user-selected Smart App Control change passes all three
-  new-mode tests and the readiness executable. Elevated staging/enrollment remains
-  incomplete; an initial staging attempt failed before registration, and a subsequent
-  Windows administrator prompt was reported canceled. No new tile/service/vault exists.
+  new-mode tests and the readiness executable. The initial Windows PowerShell 5.1
+  staging parse error was corrected. The user then completed elevated staging,
+  phone enrollment and installation; see the installed-state evidence above.
 - Android 0.5.0 APK builds; **10 JVM tests pass**, including delegated trust, RSA
   release and actual CNG-to-JCA RSA/AES-GCM interoperability. Android lint passes
   with existing warnings. Hardware BiometricPrompt is not exercised by JVM tests.
@@ -31,8 +38,8 @@ Observed automated results:
   the read-only readiness probe run in that shell, and setup `-WhatIf` causes no mutations.
   The Unicode arrow that caused a missing-string-terminator error when a BOM-less
   UTF-8 script was read as ANSI was replaced with ASCII. The packaging script's
-  non-ASCII heading was also removed. Installer
-  status reports no new provider/service/vault installed or enrolled.
+  non-ASCII heading was also removed. Installer/service/registry read-only checks
+  now confirm installation without changing Microsoft's normal providers.
 - Existing hosted desktop pairing is preserved; refreshed companion launches.
 - Production migration 004 applied through the existing verified TLS database
   connection, without changing device rows or pairing trust.
@@ -62,12 +69,14 @@ the software did not write the policy registry or change Windows Security settin
 Installer preflight stops before registering the tile when any required program is
 blocked. Trusted publisher signing remains the option for keeping Smart App Control On.
 
-No Windows password was entered during development. Native vault enrollment, machine
-key creation under elevation, LocalSystem execution, real Microsoft-account logon,
-first sign-in after reboot, resume, failure recovery and OPPO A5 Pro/Android 16 hardware
-RSA/biometric behavior remain physical acceptance steps in the setup guide. No claim
-of an already working automatic Windows unlock is made. The new APK is an update
-artifact; no Android device was attached for automatic installation.
+No Windows password was entered through tools or chat during development. The user
+entered it only in local enrollment; successful setup verifies it through Windows
+and commits the phone-controlled encrypted vault. Machine-key preflight and
+LocalSystem service startup are now confirmed. Actual Winlogon credential acceptance,
+first sign-in after reboot, resume, failure recovery and the OPPO A5 Pro/Android 16
+per-request RSA/biometric release remain physical acceptance steps. No claim of an
+already working automatic Windows unlock is made. The user reports installing the
+Android 0.5 update; no Android device was attached for automatic installation.
 
 The initial test-cluster startup through a captured shell pipeline retained a child
 output handle. The direct bounded SQL test run completed successfully; the cluster

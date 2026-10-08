@@ -1,6 +1,7 @@
 [CmdletBinding(SupportsShouldProcess=$true)]
 param([ValidateSet('Status','Prepare','Install')][string]$Stage='Status',[string]$SourceDirectory,[switch]$DevelopmentBuild,[switch]$RecoveryVerified)
 $ErrorActionPreference='Stop'
+# Keep this script ASCII so Windows PowerShell 5.1 can read it without a UTF-8 BOM.
 . (Join-Path $PSScriptRoot 'Password-Helpers.ps1')
 if($Stage -eq 'Status'){
   [pscustomobject]@{mode='phone-controlled-password';serviceInstalled=[bool](Get-Service -Name $taskPasswordService -ErrorAction SilentlyContinue);tileRegistered=Test-Path -LiteralPath $taskPasswordProvider;vaultPresent=Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'WINDOWS-UNLOCK-Password\vault.dpapi');customLsaRequired=$false;appControl=Get-PasswordAppControlStatus;systemProviders=Get-PasswordProviderInventory}
@@ -53,7 +54,7 @@ try{
   $taskInproc=Join-Path $taskPasswordClsid 'InprocServer32';New-Item -Path $taskInproc | Out-Null;Set-Item -LiteralPath $taskInproc -Value (Join-Path $taskPasswordTarget 'CredentialProviderPassword.dll');New-ItemProperty -LiteralPath $taskInproc -Name ThreadingModel -Value Apartment -PropertyType String | Out-Null
   New-Item -Path $taskPasswordProvider | Out-Null;$taskMadeProvider=$true;Set-Item -LiteralPath $taskPasswordProvider -Value 'Unlock with Phone'
   if((Get-PasswordProviderInventory) -ne $taskBefore){throw 'Other sign-in provider configuration changed unexpectedly.'}
-  Write-Output 'Installed additional Unlock with Phone tile. Lock Windows, select Sign-in options → Unlock with Phone, and approve on the phone. Use normal PIN/Password if unavailable.'
+  Write-Output 'Installed additional Unlock with Phone tile. Lock Windows, select Sign-in options > Unlock with Phone, and approve on the phone. Use normal PIN/Password if unavailable.'
 }catch{
   if($taskMadeProvider){Remove-Item -LiteralPath $taskPasswordProvider -ErrorAction SilentlyContinue}
   if($taskMadeCom){Remove-Item -LiteralPath (Join-Path $taskPasswordClsid 'InprocServer32') -ErrorAction SilentlyContinue;Remove-Item -LiteralPath $taskPasswordClsid -ErrorAction SilentlyContinue}

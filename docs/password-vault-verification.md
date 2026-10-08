@@ -27,7 +27,11 @@ Observed automated results:
 - Android 0.5.0 APK builds; **10 JVM tests pass**, including delegated trust, RSA
   release and actual CNG-to-JCA RSA/AES-GCM interoperability. Android lint passes
   with existing warnings. Hardware BiometricPrompt is not exercised by JVM tests.
-- PowerShell scripts parse; one-time setup `-WhatIf` causes no mutations. Installer
+- **10 setup-related scripts parse in Windows PowerShell 5.1**; installer status and
+  the read-only readiness probe run in that shell, and setup `-WhatIf` causes no mutations.
+  The Unicode arrow that caused a missing-string-terminator error when a BOM-less
+  UTF-8 script was read as ANSI was replaced with ASCII. The packaging script's
+  non-ASCII heading was also removed. Installer
   status reports no new provider/service/vault installed or enrolled.
 - Existing hosted desktop pairing is preserved; refreshed companion launches.
 - Production migration 004 applied through the existing verified TLS database

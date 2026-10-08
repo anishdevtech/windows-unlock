@@ -31,7 +31,7 @@ try{
   $taskCommit=(& git -C $taskRoot rev-parse HEAD).Trim();if($LASTEXITCODE){throw 'Cannot identify source commit.'}
   @{project='WINDOWS-UNLOCK';version='0.5.0';unsignedPrototype=[bool]$UnsignedPrototype;sourceCommit=$taskCommit;sha256=$taskHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskStage 'manifest.json') -Encoding UTF8
   @'
-WINDOWS-UNLOCK 0.5.0 — phone-controlled encrypted password prototype
+WINDOWS-UNLOCK 0.5.0 - phone-controlled encrypted password prototype
 
 Start with docs/password-unlock-setup.md. Normal Windows PIN/Password are preserved.
 This bundle does not contain or install an LSA authentication package.

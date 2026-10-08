@@ -1,7 +1,7 @@
 import type { FastifyInstance,FastifyRequest } from 'fastify';
 import type { Store,Row } from './store.js';
 import { fields,verified,requireThat,uuid,now } from './protocol.js';
-export const diagnosticCodes=['app_started','app_stopped','relay_ready','relay_unavailable','request_sent','push_sent','push_failed','push_missing','approval_verified','approval_denied','approval_expired','approval_failed','camera_started','camera_stopped','camera_failed','remote_received','remote_failed','session_locked','session_unlocked','native_unavailable','native_ready','network_retry','credential_submitted'];
+export const diagnosticCodes=['app_started','app_stopped','relay_ready','relay_unavailable','request_sent','push_sent','push_failed','push_missing','approval_verified','approval_denied','approval_expired','approval_failed','camera_started','camera_stopped','camera_failed','remote_received','remote_failed','session_locked','session_unlocked','native_unavailable','native_ready','network_retry','credential_submitted','windows_signin_failed','windows_result_success'];
 export function validEntry(e:any){
   requireThat(e&&Object.keys(e).sort().join(',')==='code,durationMs,id,level,requestId,timestamp','invalid_diagnostic');
   requireThat(uuid(e.id)&&Number.isSafeInteger(e.timestamp)&&e.timestamp>now()-604800&&e.timestamp<=now()+30&&diagnosticCodes.includes(e.code)&&['info','warning','error'].includes(e.level)&&

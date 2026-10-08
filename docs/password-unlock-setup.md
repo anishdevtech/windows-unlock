@@ -1,4 +1,4 @@
-# One-time phone sign-in setup (0.5)
+# One-time phone sign-in setup (Windows 0.5.1, Android 0.5)
 
 This mode uses an extra C++ Credential Provider and Windows' built-in password
 authentication. No custom LSA DLL, Partner Center account or EV certificate is used.
@@ -24,7 +24,7 @@ replacement for Windows Hello. Installing the APK alone does not install the til
   the same app/signing identity to retain pairing. Android 15+ is required for this
   mode's OAEP parameters. Your OPPO A5 Pro/Android 16 meets the OS requirement, but
   actual hardware key and biometric acceptance must still be checked on the phone.
-- Relay `/health` reports `runtimeVersion: 0.5.0`; migration 004 is applied; Firebase
+- Relay `/health` reports `runtimeVersion: 0.5.1`; migration 004 is applied; Firebase
   push is configured. Allow Android notifications and tap a notification to approve.
   Android controls background display; the app cannot guarantee a forced popup.
 - Leave **test-only lock/startup notifications** off in the companion when using
@@ -133,21 +133,63 @@ Paired DPAPI configuration already contains the laptop's scoped relay token.
 
 ## Sign in and acceptance
 
-1. Lock Windows. Select **Sign-in options → Unlock with Phone** for the enrolled
-   account. Selection initiates one fresh 60-second request; the provider never
-   forces itself to be the default and never filters Microsoft's providers.
+### Update an already enrolled 0.5 installation
+
+From the unlocked desktop, open 64-bit PowerShell as Administrator under the enrolled
+account and run the update. It preserves the encrypted password, machine key and
+phone pairing; no new password dialog or Android update is needed:
+
+```powershell
+cd C:\Users\lenovo\Desktop\projects\WINDOWS-UNLOCK
+.\windows\installer\Update-PasswordUnlock.ps1 -DevelopmentBuild -RecoveryVerified -AutomaticRequests On
+# Extracted ZIP: .\installer\Update-PasswordUnlock.ps1 with the same arguments.
+```
+
+The updater checks the existing owned registrations and hashes, tests the staged
+build, stops only our service, replaces both sides of V4 IPC, enables the protected
+setting, and restarts the service. Rollback restores the previous encrypted vault
+and binaries if the update fails. Do not run while LogonUI is active or replace only
+the DLL. A loaded DLL requires signing in/retrying, possibly after a restart. Windows
+PIN/Password, default-provider registry settings and LSA protection are untouched.
+
+Automatic requests are opt-in. New installations start in manual mode. After setup,
+an enrolled administrator can enable/disable them without reenrolling:
+
+```powershell
+& "$env:ProgramFiles\WINDOWS-UNLOCK-Password\PhoneUnlockPasswordCheck.exe" --automatic-requests on
+# Use off to disable unsolicited requests and return to manual tile selection.
+Restart-Service WindowsUnlockPasswordService
+& "$env:ProgramFiles\WINDOWS-UNLOCK-Password\PhoneUnlockPasswordCheck.exe" --status
+```
+
+### Physical acceptance steps
+
+1. With automatic requests enabled, lock Windows. The SYSTEM service queues one
+   request when the enrolled console session locks, and on service startup at first
+   sign-in. It waits up to 30 seconds for a trusted System32 LogonUI and valid console
+   context. The provider also discovers the protected setting without tile selection.
+   They share one pending challenge rather than producing duplicate pushes. No
+   navigation through Sign-in options is required to create the request. Windows
+   still controls screen wake, its clock/lock-screen cover and credential UI lifecycle;
+   this prototype does not simulate keys to dismiss those screens.
 2. Tap the Android notification, review the laptop/account and press **Approve**.
    The system fingerprint/strong-face/device-credential prompt authorizes Keystore
    decryption. The phone returns only a signed, encrypted key release.
 3. Windows verifies the signature and request digest, decrypts locally, and submits
-   native password credentials to built-in Negotiate. The selected tile can then
-   submit automatically. A backend `approved` status alone cannot unlock Windows.
+   native password credentials to built-in Negotiate. Verified approval triggers
+   the provider's supported one-time default/autologon callback, even if the phone
+   tile was not selected. UI re-enumeration preserves the approved object. No
+   permanent default-provider preference is written. Windows may apply its own
+   interaction policy; actual Winlogon acceptance must be tested. A backend
+   `approved` status alone cannot unlock Windows.
 4. Repeat with phone mobile data, denial, expiration, phone offline, relay offline,
    service stopped, switching to PIN, and repeated approval. Verify **normal PIN and
    Password still work each time**. Session changes cancel pending work.
-5. Test restart separately. The service starts before first sign-in; select the phone
-   tile to request approval. This code path does not rely on the tray companion or
-   a signed-in user's profile. Validate real first-sign-in and resumed-session behavior.
+5. Test restart separately. The service starts before first sign-in and queues a
+   request when the console LogonUI is available. This path does not rely on the
+   tray companion or a signed-in user's profile. Validate actual cold boot/resume
+   behavior and notification delivery. With automatic requests disabled, select the
+   extra phone tile to request approval manually.
 
 This mode currently uses the HTTPS/FCM relay; direct LAN delivery is not implemented
 for the vault protocol. If networking or approval fails, choose normal Windows PIN.
@@ -193,7 +235,12 @@ The service queues allowlisted codes (`request_sent`, `approval_verified`,
 `approval_failed`, `credential_submitted`, etc.) and uploads signed batches every
 15 seconds. Seven-day server retention applies. `credential_submitted` means the
 credential was handed to Windows, **not** that Windows accepted the sign-in.
+After handoff, `windows_signin_failed` records a Windows rejection and
+`windows_result_success` records a successful status callback. A missing callback
+does not prove success. Failure UI includes hexadecimal NTSTATUS/substatus for
+local diagnosis without logging secrets. The 0.5.1 tests do not exercise actual
+Winlogon authentication; verify the physical acceptance steps above.
 No password, key release, token, account name, arbitrary exception, biometric data,
 or packed credential is logged. Setup copies the companion's server-diagnostics
 preference into the privileged vault configuration; rerun enrollment to change the
-service's setting. Logs are best effort and never authorize sign-in.
+   service's setting. Logs are best effort and never authorize sign-in.

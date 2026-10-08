@@ -1,4 +1,35 @@
-# Version 0.5 verification — 2026-10-08
+# Version 0.5 / 0.5.1 verification — 2026-10-08
+
+## Automatic-request and handoff repair (0.5.1)
+
+Read-only production metadata showed three `vault-unlock` approvals followed by
+native `approval_verified`, with no `credential_submitted`. This establishes that
+phone release/decrypt/credential packing completed, but the old UI flow had not
+handed the credential off. It does not establish a Windows password rejection.
+The user also reports biometric approval followed by remaining on the password screen.
+
+The 0.5.1 repair preserves approved credentials across unchanged user arrays,
+field detach/reattach and selection transitions, supports late provider Advise,
+and advertises supported one-time automatic serialization only after verification.
+An opt-in protected setting permits unselected requests and queues lock/cold-boot
+requests from the LocalSystem service. Cancellation and deadlines remain enforced.
+
+Repeated lifecycle testing exposed a separate pipe-delivery race: server disconnect
+could discard its buffered response before the client read it. V4 adds a bounded
+receipt acknowledgement; delayed-reader coverage passes. The actual COM lifecycle
+harness then passed ten consecutive runs. This uses a separate test-only GUID/DLL,
+mock pipe and dummy credential; it performs no registration or Windows sign-in.
+The final native build passes all four password suites (vault, COM fallback, IPC,
+lifecycle). Backend TypeScript build and the diagnostics test pass for the new
+allowlisted Windows rejection/success callback codes. The in-place updater parses
+in Windows PowerShell 5.1, keeps the encrypted vault/pairing, and includes rollback.
+
+Actual automatic cold boot, real Winlogon credential acceptance and notification
+delivery remain physical acceptance checks. Android 0.5 remains compatible; this
+native repair does not require a new phone installation. The previous deployment
+and installation evidence below describes 0.5 unless marked otherwise.
+
+## Earlier 0.5 baseline
 
 Implemented and built: optional encrypted-password Credential Provider/service,
 local masked enrollment, Keystore-gated RSA release, delegated pre-logon requests,

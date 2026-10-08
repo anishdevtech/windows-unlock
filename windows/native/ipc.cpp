@@ -35,13 +35,23 @@ bool registeredService(DWORD process){
 Response exchange(const std::wstring& name,DWORD testServer,const Request& request,std::stop_token stop){
   require(valid(request),"Invalid IPC request");require(!stop.stop_requested(),"IPC cancelled");
   // Identification SQOS prevents a fake pipe from obtaining a usable caller token.
-  Handle pipe(CreateFileW(name.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED|SECURITY_SQOS_PRESENT|SECURITY_IDENTIFICATION,nullptr));require(bool(pipe),"Service unavailable");
+  Handle pipe;const auto connectDeadline=GetTickCount64()+100;
+  do{pipe.reset(CreateFileW(name.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED|SECURITY_SQOS_PRESENT|SECURITY_IDENTIFICATION,nullptr));if(pipe||GetLastError()!=ERROR_PIPE_BUSY)break;if(stop.stop_requested())break;WaitNamedPipeW(name.c_str(),10);}while(GetTickCount64()<connectDeadline);
+  require(bool(pipe)&&!stop.stop_requested(),"Service unavailable");
   DWORD process{};require(GetNamedPipeServerProcessId(pipe.get(),&process)!=FALSE,"Pipe identity unavailable");
   require(testServer?process==testServer:registeredService(process),"Untrusted pipe server");
   DWORD mode=PIPE_READMODE_MESSAGE;require(SetNamedPipeHandleState(pipe.get(),&mode,nullptr,nullptr)!=FALSE,"IPC mode failed");
   auto outgoing=request;Response response{};
   require(io(pipe.get(),&outgoing,sizeof(outgoing),true,nullptr,stop)&&io(pipe.get(),&response,sizeof(response),false,nullptr,stop),"IPC timed out or invalid frame");
-  require(valid(response,request),"Invalid IPC response");return response;
+  require(valid(response,request),"Invalid IPC response");
+#ifdef PU_PASSWORD_UNLOCK
+  // Keep the server connection alive until the client has consumed the response.
+  // DisconnectNamedPipe otherwise discards unread buffered data. The ack is bounded
+  // like every other frame; no unbounded FlushFileBuffers on a stalled caller.
+  uint32_t acknowledgement=WireMagic;
+  require(io(pipe.get(),&acknowledgement,sizeof(acknowledgement),true,nullptr,stop),"IPC acknowledgement failed");
+#endif
+  return response;
 }
 }
 bool validSid(const std::wstring& sid){if(sid.empty()||sid.size()>=184)return false;Local result;return ConvertStringSidToSidW(sid.c_str(),&result.value)&&IsValidSid(result.value);}
@@ -54,11 +64,15 @@ bool systemProcess(DWORD process,const wchar_t* image){
 }
 bool valid(const Request& r){return r.magic==WireMagic&&r.version==WireVersion&&r.operation>=Operation::Describe&&r.operation<=
 #ifdef PU_PASSWORD_UNLOCK
-Operation::Claim
+Operation::Result
 #else
 Operation::Cancel
 #endif
-&&(r.scenario==1||r.scenario==2)&&terminated(r.sid)&&validSid(r.sid.data())&&(r.operation==Operation::Describe||!IsEqualGUID(r.operationId,GUID{}));}
+&&(r.scenario==1||r.scenario==2)&&terminated(r.sid)&&validSid(r.sid.data())&&(r.operation==Operation::Describe||!IsEqualGUID(r.operationId,GUID{}))
+#ifdef PU_PASSWORD_UNLOCK
+&&(r.operation==Operation::Result||(!r.resultStatus&&!r.resultSubstatus))
+#endif
+;}
 bool valid(const Response& r,const Request& q){
 #ifdef PU_PASSWORD_UNLOCK
   if(r.windowsSignInEnabled!=1||r.proofSize>=ProofCapacity||((q.operation==Operation::Claim&&r.state==State::ApprovedSignIn)?r.proofSize==0:r.proofSize!=0))return false;
@@ -69,7 +83,13 @@ bool valid(const Response& r,const Request& q){
 #else
   if(r.windowsSignInEnabled!=0)return false;constexpr State last=State::NotConfigured;
 #endif
-  return r.magic==WireMagic&&r.version==WireVersion&&r.state>=State::Unavailable&&r.state<=last&&r.reserved==0&&terminated(r.sid)&&terminated(r.phoneName)&&r.sid==q.sid&&IsEqualGUID(r.operationId,q.operationId);
+  const bool flagsValid=
+#ifdef PU_PASSWORD_UNLOCK
+    q.operation==Operation::Describe&&r.state==State::Ready?r.reserved<=AutomaticRequests:r.reserved==0;
+#else
+    r.reserved==0;
+#endif
+  return r.magic==WireMagic&&r.version==WireVersion&&r.state>=State::Unavailable&&r.state<=last&&flagsValid&&terminated(r.sid)&&terminated(r.phoneName)&&r.sid==q.sid&&IsEqualGUID(r.operationId,q.operationId);
 }
 bool serviceProcess(DWORD process){return registeredService(process);}
 std::wstring statusText(State s){switch(s){
@@ -98,7 +118,11 @@ void serve(const std::wstring& name,const std::wstring& sddl,HANDLE stop,const A
   while(WaitForSingleObject(stop,0)!=WAIT_OBJECT_0){auto ready=event();OVERLAPPED op{};op.hEvent=ready.get();BOOL connected=ConnectNamedPipe(pipe.get(),&op);DWORD error=connected?ERROR_SUCCESS:GetLastError();
     if(error==ERROR_IO_PENDING){HANDLE waits[]{stop,ready.get()};auto result=WaitForMultipleObjects(2,waits,FALSE,INFINITE);if(result!=WAIT_OBJECT_0+1){CancelIoEx(pipe.get(),&op);DWORD count{};GetOverlappedResult(pipe.get(),&op,&count,TRUE);break;}DWORD count{};connected=GetOverlappedResult(pipe.get(),&op,&count,FALSE);}
     else if(error==ERROR_PIPE_CONNECTED)connected=TRUE;
-    if(connected){Caller caller{};Request request{};try{if(authorize(pipe.get(),caller)&&io(pipe.get(),&request,sizeof(request),false,stop,{})&&valid(request)&&request.sessionId==caller.sessionId){auto reply=dispatch(request,caller);if(valid(reply,request))io(pipe.get(),&reply,sizeof(reply),true,stop,{});
+    if(connected){Caller caller{};Request request{};try{if(authorize(pipe.get(),caller)&&io(pipe.get(),&request,sizeof(request),false,stop,{})&&valid(request)&&request.sessionId==caller.sessionId){auto reply=dispatch(request,caller);if(valid(reply,request)&&io(pipe.get(),&reply,sizeof(reply),true,stop,{})){
+#ifdef PU_PASSWORD_UNLOCK
+      uint32_t acknowledgement{};io(pipe.get(),&acknowledgement,sizeof(acknowledgement),false,stop,{});
+#endif
+    }
 #ifdef PU_PASSWORD_UNLOCK
       SecureZeroMemory(reply.proof.data(),reply.proof.size());
 #endif

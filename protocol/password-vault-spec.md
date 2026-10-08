@@ -40,7 +40,7 @@ through Windows, wipes plaintext buffers, and commits protected state atomically
 
 ## Each login
 
-Only the real local-console `LogonUI.exe` running as SYSTEM can access V3 IPC.
+Only the real local-console `LogonUI.exe` running as SYSTEM can access V4 IPC.
 The service accepts the enrolled SID and CPUS_LOGON/CPUS_UNLOCK_WORKSTATION context.
 An existing user session must be locked and match the enrolled SID. First sign-in
 requires an empty active console with no user token and logon scenario.
@@ -75,11 +75,39 @@ credentials; local accounts use protected `KERB_INTERACTIVE_UNLOCK_LOGON`, corre
 logon/unlock message type and package-relative pointers. LogonUI submits to built-in
 Negotiate. Windows controls account policy and whether the password is accepted.
 
+V4 uses a 412-byte request and 8760-byte response, plus a four-byte receipt
+acknowledgement after a valid response. Each read/write has a bounded 250 ms wait;
+pipe-busy connection retry is bounded to 100 ms. The server keeps its first pipe
+instance alive and waits for the receipt before disconnecting, preventing unread
+responses from being discarded without an unbounded flush. V3 and V4 pipe names
+are separate; both DLL and service must be updated together.
+
+Describe advertises the one-bit automatic-request policy only for the enrolled ready
+account. The optional DPAPI config boolean `automaticRequestsEnabled` defaults false
+and can be changed only by the enrolled elevated administrator. With it enabled,
+SCM lock notifications/startup queue a challenge for the enrolled active console,
+after independently verifying its locked/empty context and SYSTEM System32 LogonUI
+PID. A provider Begin can adopt that pending operation only for the same trusted
+LogonUI PID, session, SID and scenario, before its existing expiry. Adoption changes
+only the local correlation GUID, never the signed backend challenge or deadline.
+Only cryptographically verified approval permits a one-time provider default/autologon
+callback. No permanent default-provider registry setting or filter is installed.
+
 IPC Poll exposes status only. **Claim** hands packed credentials to the initiating
 SYSTEM LogonUI caller once and immediately clears the service buffer. Switching
-tiles, cancellation, session changes, expiry, caller death and service restart revoke
-pending work. A watchdog clears unclaimed credentials independently of UI polling.
+away from a manually pending request, explicit cancellation, session changes, expiry,
+caller death and service restart revoke pending work. An automatic request continues
+without selecting the tile. Field UnAdvise/Advise, unchanged user arrays and selection
+transitions during re-enumeration preserve an already approved handoff rather than
+discarding it. A watchdog clears unclaimed credentials independently of UI polling.
 The DLL wipes IPC response buffers. Windows owns the final submitted buffer.
+
+After a one-time Claim, Result can audit Windows' status callback once for that same
+operation/caller. Non-Result requests must have zero status fields. The UI can display
+the NTSTATUS/substatus locally; server telemetry contains only allowlisted
+`windows_signin_failed` or `windows_result_success` codes, never packed credentials,
+account names, arbitrary exceptions or the password. Callback success is not
+independent proof of a completed user session. A missing Result is not a success.
 
 ## Relay and logs
 

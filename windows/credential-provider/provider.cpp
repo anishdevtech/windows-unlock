@@ -19,7 +19,20 @@ using namespace pu::native;
 using Microsoft::WRL::ComPtr;
 namespace {
 HINSTANCE module{};std::atomic<long> objects{},locks{};
+Response providerCall(const Request& request,std::stop_token stop={}){
+#ifdef PU_PROVIDER_TEST
+  return testing::call(L"\\\\.\\pipe\\WINDOWS-UNLOCK-Test-Provider-"+std::to_wstring(GetCurrentProcessId()),GetCurrentProcessId(),request,stop);
+#else
+  return call(request,stop);
+#endif
+}
+#ifdef PU_PASSWORD_UNLOCK
+constexpr wchar_t WindowClass[]=L"WINDOWS-UNLOCK-Password-V4-Events";
+#elif defined(PU_WINDOWS_UNLOCK)
+constexpr wchar_t WindowClass[]=L"WINDOWS-UNLOCK-SignIn-Events";
+#else
 constexpr wchar_t WindowClass[]=L"WINDOWS-UNLOCK-Preview-Events";
+#endif
 constexpr UINT UpdateMessage=WM_APP+193;
 enum Field:DWORD {Image,Title,Status,Recovery,Label,Submit,Cancel,FieldCount};
 constexpr const wchar_t* Labels[]{L"Phone",L"Unlock with Phone",L"Approval preview only. Use Windows PIN to sign in.",L"Sign-in options → PIN",L"Unlock with Phone (approval preview)",L"Request phone approval",L"Cancel request"};
@@ -35,12 +48,15 @@ class Credential final:public ICredentialProviderCredential2 {
   std::atomic<ULONG> refs_{1};std::wstring sid_;DWORD scenario_{},session_{};
   ComPtr<ICredentialProviderCredentialEvents> events_;HWND notification_{};DWORD uiThread_{};
   std::jthread worker_;std::atomic<State> pending_{State::Unavailable};State state_{State::Unavailable};
-  std::mutex phoneMutex_;std::wstring phone_;bool selected_{},requested_{},windowReference_{};
+  std::mutex phoneMutex_;std::wstring phone_;bool selected_{},windowReference_{};std::atomic<bool> requested_{false};
+#ifdef PU_PASSWORD_UNLOCK
+  std::atomic<bool> automatic_{false};bool discoveryAttempted_{},handoff_{};
+#endif
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
   std::shared_ptr<EventHub> hub_;DWORD index_{};std::string proof_;GUID operation_{};bool submitted_{};
   void revoke(){stop();{std::lock_guard lock(phoneMutex_);proof_.clear();}hub_->ready=CREDENTIAL_PROVIDER_NO_DEFAULT;hub_->selected=CREDENTIAL_PROVIDER_NO_DEFAULT;
     // After serialization Windows owns the proof. Teardown must not race its LSA call.
-    if(!submitted_&&!IsEqualGUID(operation_,GUID{})){try{call(request(Operation::Cancel,operation_));}catch(...){}}operation_={};submitted_=false;}
+    if(!submitted_&&!IsEqualGUID(operation_,GUID{})){try{providerCall(request(Operation::Cancel,operation_));}catch(...){}}operation_={};submitted_=false;}
 #endif
   static LRESULT CALLBACK windowProc(HWND window,UINT message,WPARAM wp,LPARAM lp){
     auto self=reinterpret_cast<Credential*>(GetWindowLongPtrW(window,GWLP_USERDATA));
@@ -49,22 +65,43 @@ class Credential final:public ICredentialProviderCredential2 {
     if(message==WM_NCDESTROY&&self){self->stop();self->events_.Reset();self->notification_=nullptr;SetWindowLongPtrW(window,GWLP_USERDATA,0);if(self->windowReference_){self->windowReference_=false;self->Release();}}
     return DefWindowProcW(window,message,wp,lp);
   }
+  HRESULT ensureWindow(){
+    if(notification_)return S_OK;uiThread_=GetCurrentThreadId();WNDCLASSW cls{};cls.hInstance=module;cls.lpszClassName=WindowClass;cls.lpfnWndProc=windowProc;
+    if(!RegisterClassW(&cls)&&GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)return HRESULT_FROM_WIN32(GetLastError());
+    AddRef();windowReference_=true;notification_=CreateWindowExW(0,WindowClass,L"",0,0,0,0,0,HWND_MESSAGE,nullptr,module,this);
+    if(!notification_){auto error=GetLastError();if(windowReference_){windowReference_=false;Release();}return HRESULT_FROM_WIN32(error);}return S_OK;
+  }
   void update() noexcept {try{state_=pending_.load();if(events_){auto text=statusText(state_);{std::lock_guard lock(phoneMutex_);if((state_==State::Waiting||state_==State::PushUnavailable)&&!phone_.empty())text=L"Request sent to "+phone_+L"\n"+text;}events_->SetFieldString(this,Status,text.c_str());}
-#if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
+#ifdef PU_PASSWORD_UNLOCK
+    if(state_==State::Ready&&selected_&&!requested_){begin();return;}
+    if(state_==State::ApprovedSignIn&&(selected_||automatic_)&&!submitted_)handoff_=true;
+    if(ready()&&hub_->events&&hub_->ready!=index_){hub_->ready=index_;if(FAILED(hub_->events->CredentialsChanged(hub_->context)))hub_->ready=CREDENTIAL_PROVIDER_NO_DEFAULT;}
+#elif defined(PU_WINDOWS_UNLOCK)
     if(state_==State::ApprovedSignIn&&selected_&&!submitted_&&hub_->events&&hub_->selected==index_&&hub_->ready!=index_){hub_->ready=index_;hub_->events->CredentialsChanged(hub_->context);}
 #endif
   }catch(...){/* Never let UI callback exceptions escape into LogonUI. */}}
   Request request(Operation op,const GUID& id)const {Request q;q.operation=op;q.scenario=scenario_;q.sessionId=session_;q.operationId=id;wcscpy_s(q.sid.data(),q.sid.size(),sid_.c_str());return q;}
   void stop() {if(worker_.joinable()){worker_.request_stop();worker_.join();}}
-  void begin(){
-    if(!notification_||!selected_||requested_)return;
+  void begin(bool discovery=false){
+#ifdef PU_PASSWORD_UNLOCK
+    if(discovery&&FAILED(ensureWindow()))return;
+    if(!notification_||(!selected_&&!discovery)||requested_)return;
+#else
+    (void)discovery;if(!notification_||!selected_||requested_)return;
+#endif
     requested_=true;stop();pending_=State::Waiting;update();GUID id{};if(FAILED(CoCreateGuid(&id))){pending_=State::Unavailable;update();return;}
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
-    operation_=id;submitted_=false;hub_->selected=index_;hub_->ready=CREDENTIAL_PROVIDER_NO_DEFAULT;{std::lock_guard lock(phoneMutex_);proof_.clear();}
+    operation_=id;submitted_=false;if(selected_)hub_->selected=index_;if(hub_->ready==index_)hub_->ready=CREDENTIAL_PROVIDER_NO_DEFAULT;{std::lock_guard lock(phoneMutex_);proof_.clear();}
 #endif
     // Only local IPC on this worker; no HTTP, private keys or biometric logic in DLL.
-    worker_=std::jthread([this,id](std::stop_token token){bool started=false,terminal=false;try{
-      auto reply=call(request(Operation::Begin,id),token);started=reply.state==State::Waiting||reply.state==State::PushUnavailable;
+    worker_=std::jthread([this,id,discovery](std::stop_token token){bool started=false,terminal=false;try{
+#ifdef PU_PASSWORD_UNLOCK
+      if(discovery){auto description=providerCall(request(Operation::Describe,GUID{}),token);
+        if(description.state!=State::Ready||!(description.reserved&AutomaticRequests)){requested_=false;pending_=description.state;PostMessageW(notification_,UpdateMessage,0,0);return;}
+        automatic_=true;
+      }
+#endif
+      auto reply=providerCall(request(Operation::Begin,id),token);started=reply.state==State::Waiting||reply.state==State::PushUnavailable;
       const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(60);
       while(!token.stop_requested()){
         {std::lock_guard lock(phoneMutex_);phone_=reply.phoneName.data();for(auto& c:phone_)if(c<32)c=L' ';
@@ -76,13 +113,29 @@ class Credential final:public ICredentialProviderCredential2 {
         if(reply.state!=State::Waiting&&reply.state!=State::PushUnavailable){terminal=true;break;}
         if(std::chrono::steady_clock::now()>=deadline){pending_=State::Expired;PostMessageW(notification_,UpdateMessage,0,0);break;}
         for(unsigned i=0;i<10&&!token.stop_requested();i++)std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        if(!token.stop_requested())reply=call(request(Operation::Poll,id),token);
+        if(!token.stop_requested())reply=providerCall(request(Operation::Poll,id),token);
       }
-    }catch(...){pending_=State::Unavailable;if(!token.stop_requested())PostMessageW(notification_,UpdateMessage,0,0);}
-      if(started&&!terminal){try{call(request(Operation::Cancel,id));}catch(...){/* Session change and expiry also revoke pending work. */}}
+    }catch(...){
+#ifdef PU_PASSWORD_UNLOCK
+if(discovery&&!automatic_)requested_=false;
+#endif
+pending_=State::Unavailable;if(!token.stop_requested())PostMessageW(notification_,UpdateMessage,0,0);}
+      if(started&&!terminal){try{providerCall(request(Operation::Cancel,id));}catch(...){/* Session change and expiry also revoke pending work. */}}
     });
   }
 public:
+#ifdef PU_PASSWORD_UNLOCK
+  bool ready()const{return state_==State::ApprovedSignIn&&(selected_||automatic_||handoff_)&&!submitted_;}
+  bool matchesSid(const std::wstring& sid)const{return sid_==sid;}
+  void discoverAutomatic(){if(!discoveryAttempted_){discoveryAttempted_=true;begin(true);}}
+  void notifyProviderReady(){update();}
+#endif
+  void shutdown(){selected_=false;stop();
+#if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
+    revoke();
+#endif
+    events_.Reset();if(notification_){DestroyWindow(notification_);notification_=nullptr;}UnregisterClassW(WindowClass,module);
+  }
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
   Credential(std::wstring sid,DWORD scenario,std::shared_ptr<EventHub> hub,DWORD index):sid_(std::move(sid)),scenario_(scenario),hub_(std::move(hub)),index_(index){++objects;ProcessIdToSessionId(GetCurrentProcessId(),&session_);}
 #else
@@ -94,17 +147,33 @@ public:
   ULONG STDMETHODCALLTYPE Release()override{auto n=--refs_;if(!n)delete this;return n;}
   HRESULT STDMETHODCALLTYPE Advise(ICredentialProviderCredentialEvents* events)override{return boundary([&]()->HRESULT{
     if(!events)return E_INVALIDARG;if(events_)return E_UNEXPECTED;
-    uiThread_=GetCurrentThreadId();WNDCLASSW cls{};cls.hInstance=module;cls.lpszClassName=WindowClass;cls.lpfnWndProc=windowProc;
-    if(!RegisterClassW(&cls)&&GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)return HRESULT_FROM_WIN32(GetLastError());
-    AddRef();windowReference_=true;notification_=CreateWindowExW(0,WindowClass,L"",0,0,0,0,0,HWND_MESSAGE,nullptr,module,this);if(!notification_){auto error=GetLastError();if(windowReference_){windowReference_=false;Release();}return HRESULT_FROM_WIN32(error);}events_=events;if(selected_)begin();return S_OK;
+    if(uiThread_&&uiThread_!=GetCurrentThreadId())return E_UNEXPECTED;auto result=ensureWindow();if(FAILED(result))return result;events_=events;update();if(selected_)begin();return S_OK;
   });}
-  HRESULT STDMETHODCALLTYPE UnAdvise()override{return boundary([&]()->HRESULT{if(uiThread_&&uiThread_!=GetCurrentThreadId())return E_UNEXPECTED;selected_=false;stop();
+  HRESULT STDMETHODCALLTYPE UnAdvise()override{return boundary([&]()->HRESULT{if(uiThread_&&uiThread_!=GetCurrentThreadId())return E_UNEXPECTED;
+#ifdef PU_PASSWORD_UNLOCK
+    // CredentialsChanged can detach/re-attach the UI. The provider owns the model.
+    events_.Reset();return S_OK;
+#else
+    selected_=false;stop();
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
     revoke();
 #endif
-    events_.Reset();if(notification_){DestroyWindow(notification_);notification_=nullptr;UnregisterClassW(WindowClass,module);}return S_OK;});}
-  HRESULT STDMETHODCALLTYPE SetSelected(BOOL* autoLogon)override{return boundary([&]()->HRESULT{if(!autoLogon)return E_POINTER;*autoLogon=FALSE;if(uiThread_&&uiThread_!=GetCurrentThreadId())return E_UNEXPECTED;selected_=true;begin();return S_OK;});}
-  HRESULT STDMETHODCALLTYPE SetDeselected()override{return boundary([&]()->HRESULT{selected_=false;stop();
+    events_.Reset();if(notification_){DestroyWindow(notification_);notification_=nullptr;UnregisterClassW(WindowClass,module);}return S_OK;
+#endif
+  });}
+  HRESULT STDMETHODCALLTYPE SetSelected(BOOL* autoLogon)override{return boundary([&]()->HRESULT{if(!autoLogon)return E_POINTER;*autoLogon=FALSE;if(uiThread_&&uiThread_!=GetCurrentThreadId())return E_UNEXPECTED;selected_=true;begin();
+#ifdef PU_PASSWORD_UNLOCK
+    *autoLogon=ready()?TRUE:FALSE;
+#endif
+    return S_OK;});}
+  HRESULT STDMETHODCALLTYPE SetDeselected()override{return boundary([&]()->HRESULT{
+#ifdef PU_PASSWORD_UNLOCK
+    const bool wasSelected=selected_;selected_=false;
+    if((!wasSelected&&automatic_)||(handoff_&&!submitted_))return S_OK;automatic_=false;
+#else
+    selected_=false;
+#endif
+    stop();
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
     revoke();
 #endif
@@ -132,6 +201,9 @@ public:
   HRESULT STDMETHODCALLTYPE SetCheckboxValue(DWORD,BOOL)override{return E_NOTIMPL;}
   HRESULT STDMETHODCALLTYPE SetComboBoxSelectedValue(DWORD,DWORD)override{return E_NOTIMPL;}
   HRESULT STDMETHODCALLTYPE CommandLinkClicked(DWORD id)override{return boundary([&]()->HRESULT{if(id!=Cancel)return E_INVALIDARG;stop();
+#ifdef PU_PASSWORD_UNLOCK
+    automatic_=false;handoff_=false;
+#endif
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
     revoke();
 #endif
@@ -141,8 +213,8 @@ public:
     if(!response||!credentials||!text||!icon)return E_POINTER;
     *response=CPGSR_NO_CREDENTIAL_NOT_FINISHED;*credentials={};*text=nullptr;*icon=CPSI_WARNING;
 #ifdef PU_PASSWORD_UNLOCK
-    return boundary([&]()->HRESULT{if(uiThread_&&uiThread_!=GetCurrentThreadId())return E_UNEXPECTED;begin();if(state_!=State::ApprovedSignIn||!selected_||submitted_)return copy(L"Waiting for phone approval. Use Windows PIN if unavailable.",text);
-      auto reply=call(request(Operation::Claim,operation_));struct Wipe{Response& value;~Wipe(){SecureZeroMemory(value.proof.data(),value.proof.size());}} wipe{reply};
+    return boundary([&]()->HRESULT{if(uiThread_&&uiThread_!=GetCurrentThreadId())return E_UNEXPECTED;begin();if(!ready())return copy(L"Waiting for phone approval. Use Windows PIN if unavailable.",text);
+      auto reply=providerCall(request(Operation::Claim,operation_));struct Wipe{Response& value;~Wipe(){SecureZeroMemory(value.proof.data(),value.proof.size());}} wipe{reply};
       if(reply.state!=State::ApprovedSignIn||!reply.proofSize)return E_FAIL;auto data=static_cast<BYTE*>(CoTaskMemAlloc(reply.proofSize));if(!data)return E_OUTOFMEMORY;
       try{credentials->ulAuthenticationPackage=pu::vault::negotiatePackage();}catch(...){CoTaskMemFree(data);throw;}
       CopyMemory(data,reply.proof.data(),reply.proofSize);credentials->clsidCredentialProvider=ProviderId;credentials->cbSerialization=reply.proofSize;credentials->rgbSerialization=data;*response=CPGSR_RETURN_CREDENTIAL_FINISHED;*icon=CPSI_NONE;submitted_=true;hub_->ready=CREDENTIAL_PROVIDER_NO_DEFAULT;return S_OK;
@@ -156,16 +228,23 @@ public:
     return boundary([&]()->HRESULT{begin();return copy(L"Approval transport preview. Windows sign-in is disabled; use Sign-in options → PIN.",text);});
 #endif
   }
-  HRESULT STDMETHODCALLTYPE ReportResult(NTSTATUS status,NTSTATUS,LPWSTR* text,CREDENTIAL_PROVIDER_STATUS_ICON* icon)override{return boundary([&]()->HRESULT{if(!text||!icon)return E_POINTER;*text=nullptr;*icon=CPSI_NONE;if(status==0)return S_OK;*icon=CPSI_ERROR;return copy(L"Windows did not accept phone sign-in. Use Windows PIN; refresh enrollment if the password changed.",text);});}
+  HRESULT STDMETHODCALLTYPE ReportResult(NTSTATUS status,NTSTATUS substatus,LPWSTR* text,CREDENTIAL_PROVIDER_STATUS_ICON* icon)override{return boundary([&]()->HRESULT{if(!text||!icon)return E_POINTER;*text=nullptr;*icon=CPSI_NONE;
+#ifdef PU_PASSWORD_UNLOCK
+    if(submitted_){try{auto q=request(Operation::Result,operation_);q.resultStatus=uint32_t(status);q.resultSubstatus=uint32_t(substatus);providerCall(q);}catch(...){}}
+#else
+    (void)substatus;
+#endif
+    if(status==0)return S_OK;*icon=CPSI_ERROR;wchar_t error[256]{};swprintf_s(error,L"Windows rejected phone sign-in (0x%08X / 0x%08X). Use Windows PIN; refresh enrollment if the password changed.",unsigned(status),unsigned(substatus));return copy(error,text);});}
 };
 
 class Provider final:public ICredentialProvider,public ICredentialProviderSetUserArray {
-  std::atomic<ULONG> refs_{1};DWORD scenario_{};ComPtr<ICredentialProviderUserArray> users_;std::vector<ComPtr<ICredentialProviderCredential>> credentials_;
+  std::atomic<ULONG> refs_{1};DWORD scenario_{};ComPtr<ICredentialProviderUserArray> users_;std::vector<ComPtr<Credential>> credentials_;
+  void clear(){for(auto& credential:credentials_)credential->shutdown();credentials_.clear();}
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
   std::shared_ptr<EventHub> hub_{std::make_shared<EventHub>()};
 #endif
   void enumerate(){if(!credentials_.empty()||!users_||!scenario_)return;DWORD count{};if(FAILED(users_->GetCount(&count))||count>64)return;
-    for(DWORD i=0;i<count;i++){ComPtr<ICredentialProviderUser> user;if(FAILED(users_->GetAt(i,&user)))continue;LPWSTR raw{};if(FAILED(user->GetSid(&raw)))continue;std::wstring sid=raw?raw:L"";CoTaskMemFree(raw);if(!validSid(sid))continue;ComPtr<ICredentialProviderCredential> credential;
+    for(DWORD i=0;i<count;i++){ComPtr<ICredentialProviderUser> user;if(FAILED(users_->GetAt(i,&user)))continue;LPWSTR raw{};if(FAILED(user->GetSid(&raw)))continue;std::wstring sid=raw?raw:L"";CoTaskMemFree(raw);if(!validSid(sid))continue;ComPtr<Credential> credential;
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
       credential.Attach(new Credential(std::move(sid),scenario_,hub_,DWORD(credentials_.size())));
 #else
@@ -174,10 +253,14 @@ class Provider final:public ICredentialProvider,public ICredentialProviderSetUse
       credentials_.push_back(std::move(credential));}
   }
 public:
-  Provider(){++objects;}~Provider(){--objects;}
+  Provider(){++objects;}~Provider(){clear();--objects;}
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void** output)override{if(!output)return E_POINTER;*output=nullptr;if(iid==IID_IUnknown||iid==__uuidof(ICredentialProvider))*output=static_cast<ICredentialProvider*>(this);else if(iid==__uuidof(ICredentialProviderSetUserArray))*output=static_cast<ICredentialProviderSetUserArray*>(this);else return E_NOINTERFACE;AddRef();return S_OK;}
   ULONG STDMETHODCALLTYPE AddRef()override{return ++refs_;}ULONG STDMETHODCALLTYPE Release()override{auto n=--refs_;if(!n)delete this;return n;}
-  HRESULT STDMETHODCALLTYPE SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario,DWORD flags)override{return boundary([&]()->HRESULT{scenario_=0;credentials_.clear();users_.Reset();
+  HRESULT STDMETHODCALLTYPE SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario,DWORD flags)override{return boundary([&]()->HRESULT{
+#ifdef PU_PASSWORD_UNLOCK
+    DWORD currentSession{};if(!flags&&scenario_==DWORD(scenario)&&scenario_&&ProcessIdToSessionId(GetCurrentProcessId(),&currentSession)&&currentSession==WTSGetActiveConsoleSessionId())return S_OK;
+#endif
+    scenario_=0;clear();users_.Reset();
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
     hub_->ready=hub_->selected=CREDENTIAL_PROVIDER_NO_DEFAULT;
 #endif
@@ -186,6 +269,9 @@ public:
   HRESULT STDMETHODCALLTYPE Advise(ICredentialProviderEvents* events,UINT_PTR context)override{
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
     if(!events)return E_INVALIDARG;hub_->events=events;hub_->context=context;
+#ifdef PU_PASSWORD_UNLOCK
+    for(auto& credential:credentials_)credential->notifyProviderReady();
+#endif
 #else
     (void)events;(void)context;
 #endif
@@ -195,7 +281,11 @@ public:
     hub_->events.Reset();hub_->ready=hub_->selected=CREDENTIAL_PROVIDER_NO_DEFAULT;
 #endif
     return S_OK;}
-  HRESULT STDMETHODCALLTYPE SetUserArray(ICredentialProviderUserArray* users)override{return boundary([&]()->HRESULT{credentials_.clear();users_=users;
+  HRESULT STDMETHODCALLTYPE SetUserArray(ICredentialProviderUserArray* users)override{return boundary([&]()->HRESULT{
+#ifdef PU_PASSWORD_UNLOCK
+    if(users&&!credentials_.empty()){DWORD count{};std::vector<std::wstring> sids;if(SUCCEEDED(users->GetCount(&count))&&count<=64){for(DWORD i=0;i<count;i++){ComPtr<ICredentialProviderUser> user;LPWSTR raw{};if(SUCCEEDED(users->GetAt(i,&user))&&SUCCEEDED(user->GetSid(&raw))){std::wstring sid=raw?raw:L"";CoTaskMemFree(raw);if(validSid(sid))sids.push_back(sid);}}}bool same=sids.size()==credentials_.size();for(size_t i=0;same&&i<sids.size();i++)same=credentials_[i]->matchesSid(sids[i]);if(same){users_=users;return S_OK;}}
+#endif
+    clear();users_=users;
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
     hub_->ready=hub_->selected=CREDENTIAL_PROVIDER_NO_DEFAULT;
 #endif
@@ -209,7 +299,10 @@ public:
 #endif
     if(FAILED(result)){CoTaskMemFree(field);return result;}if(id==Image)field->guidFieldType=CPFG_CREDENTIAL_PROVIDER_LOGO;if(id==Label)field->guidFieldType=CPFG_CREDENTIAL_PROVIDER_LABEL;*output=field;return S_OK;});}
   HRESULT STDMETHODCALLTYPE GetCredentialCount(DWORD* count,DWORD* defaultIndex,BOOL* autoLogon)override{return boundary([&]()->HRESULT{if(!count||!defaultIndex||!autoLogon)return E_POINTER;*count=0;*defaultIndex=CREDENTIAL_PROVIDER_NO_DEFAULT;*autoLogon=FALSE;enumerate();*count=DWORD(credentials_.size());
-#if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
+#ifdef PU_PASSWORD_UNLOCK
+    for(auto& credential:credentials_)credential->discoverAutomatic();
+    if(hub_->ready<*count&&credentials_[hub_->ready]->ready()){*defaultIndex=hub_->ready;*autoLogon=TRUE;}
+#elif defined(PU_WINDOWS_UNLOCK)
     if(hub_->ready==hub_->selected&&hub_->ready<*count){*defaultIndex=hub_->ready;*autoLogon=TRUE;}
 #endif
     return S_OK;});}

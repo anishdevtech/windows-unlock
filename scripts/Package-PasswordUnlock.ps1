@@ -7,7 +7,7 @@ $taskStage=Join-Path $taskOutput ('password-package-'+[Guid]::NewGuid().ToString
 $taskPayload=@('CredentialProviderPassword.dll','PhoneUnlockPasswordService.exe','PhoneUnlockPasswordSetup.exe','PhoneUnlockPasswordCheck.exe','password_provider_tests.exe','password_ipc_tests.exe','vault_tests.exe')
 $taskFiles=@{}
 foreach($taskName in $taskPayload){$taskFiles["Release/$taskName"]=Join-Path $taskRoot "build\windows\Release\$taskName"}
-foreach($taskName in @('Install-PasswordUnlock.ps1','Uninstall-PasswordUnlock.ps1','Recover-PasswordUnlock.ps1','Password-Helpers.ps1')){$taskFiles["installer/$taskName"]=Join-Path $taskRoot "windows\installer\$taskName"}
+foreach($taskName in @('Install-PasswordUnlock.ps1','Update-PasswordUnlock.ps1','Uninstall-PasswordUnlock.ps1','Recover-PasswordUnlock.ps1','Password-Helpers.ps1')){$taskFiles["installer/$taskName"]=Join-Path $taskRoot "windows\installer\$taskName"}
 foreach($taskName in @('password-unlock-setup.md','password-vault-security.md','password-vault-verification.md')){$taskFiles["docs/$taskName"]=Join-Path $taskRoot "docs\$taskName"}
 $taskFiles['protocol/password-vault-spec.md']=Join-Path $taskRoot 'protocol\password-vault-spec.md'
 $taskFiles['scripts/Test-PasswordUnlockReadiness.ps1']=Join-Path $taskRoot 'scripts\Test-PasswordUnlockReadiness.ps1'
@@ -29,9 +29,9 @@ try{
     $taskHashes[$taskEntry.Key]=(Get-FileHash -LiteralPath $taskDestination -Algorithm SHA256).Hash.ToLowerInvariant()
   }
   $taskCommit=(& git -C $taskRoot rev-parse HEAD).Trim();if($LASTEXITCODE){throw 'Cannot identify source commit.'}
-  @{project='WINDOWS-UNLOCK';version='0.5.0';unsignedPrototype=[bool]$UnsignedPrototype;sourceCommit=$taskCommit;sha256=$taskHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskStage 'manifest.json') -Encoding UTF8
+  @{project='WINDOWS-UNLOCK';version='0.5.1';unsignedPrototype=[bool]$UnsignedPrototype;sourceCommit=$taskCommit;sha256=$taskHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskStage 'manifest.json') -Encoding UTF8
   @'
-WINDOWS-UNLOCK 0.5.0 - phone-controlled encrypted password prototype
+WINDOWS-UNLOCK 0.5.1 - automatic phone-request and sign-in handoff update
 
 Start with docs/password-unlock-setup.md. Normal Windows PIN/Password are preserved.
 This bundle does not contain or install an LSA authentication package.
@@ -49,12 +49,16 @@ Run from extracted bundle in administrator PowerShell only after reading the gui
   .\installer\Install-PasswordUnlock.ps1 -Stage Prepare -DevelopmentBuild -RecoveryVerified
 Then use the local masked setup dialog and approve enrollment on the phone.
 Register the extra tile only after enrollment succeeds, as described in the guide.
+
+For an existing enrolled 0.5 installation, preserve pairing and encrypted password:
+  .\installer\Update-PasswordUnlock.ps1 -DevelopmentBuild -RecoveryVerified -AutomaticRequests On
+No new password enrollment or Android update is required for this native update.
 '@ | Set-Content -LiteralPath (Join-Path $taskStage 'README.txt') -Encoding UTF8
-  $taskZip=Join-Path $taskOutput 'WINDOWS-UNLOCK-0.5.0-Windows-prototype.zip'
+  $taskZip=Join-Path $taskOutput 'WINDOWS-UNLOCK-0.5.1-Windows-prototype.zip'
   Compress-Archive -LiteralPath (Get-ChildItem -LiteralPath $taskStage | ForEach-Object FullName) -DestinationPath $taskZip -Force
   $taskApk=Join-Path $taskOutput 'WINDOWS-UNLOCK-0.5.0-debug.apk'
   Copy-Item -LiteralPath $taskApkSource -Destination $taskApk -Force
-  @($taskZip,$taskApk) | ForEach-Object {"$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_))"} | Set-Content -LiteralPath (Join-Path $taskOutput 'WINDOWS-UNLOCK-0.5.0-SHA256SUMS.txt') -Encoding ASCII
+  @($taskZip,$taskApk) | ForEach-Object {"$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_))"} | Set-Content -LiteralPath (Join-Path $taskOutput 'WINDOWS-UNLOCK-0.5.1-SHA256SUMS.txt') -Encoding ASCII
   Write-Output $taskZip
   Write-Output $taskApk
 }finally{

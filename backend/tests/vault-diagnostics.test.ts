@@ -17,4 +17,5 @@ test('native diagnostics require paired delegation and reject secret or forged e
   assert.equal((await post([e])).statusCode,200);assert.equal((await post([e])).statusCode,200);assert.equal((await store.all('diagnostic_logs')).length,1);
   assert.equal((await post([e],other)).statusCode,400);assert.equal((await post([{...e,password:'secret'}])).statusCode,400);assert.equal((await post([{...e,code:'secret password text'}])).statusCode,400);
   assert.equal((await app.inject({method:'GET',url:'/v1/diagnostics',headers:{authorization:`Bearer ${at}`}})).json().entries[0].code,'credential_submitted');
+  for(const code of ['windows_signin_failed','windows_result_success'])assert.equal((await post([{...e,id:randomUUID(),code}])).statusCode,200);
 });

@@ -5,8 +5,8 @@ used by other phone unlock applications. Earlier password-free/no-stored-passwor
 design notes remain historical; this explicitly authorized mode changes that tradeoff.
 
 ```text
-Unlock with Phone tile (native COM, selected account)
-  → SYSTEM-only local V3 pipe
+Lock/startup event or Unlock with Phone tile (native COM, enrolled account)
+  → SYSTEM-only local V4 pipe
   → PhoneUnlockPasswordService (SYSTEM, pre-logon)
   → delegated signed challenge → HTTPS/PostgreSQL relay → FCM notification
   → Android review → system BiometricPrompt → hardware Keystore RSA decryption
@@ -33,7 +33,7 @@ Microsoft's signing of custom protected-LSA packages.
 | Fake local pipe/client | First-instance pipe name ownership, remote clients rejected, SYSTEM-only DACL, exact System32 LogonUI image and console session, SCM-verified LocalSystem service PID, identification SQOS, enrolled SID and operation/caller binding. |
 | Forgotten claim/dead LogonUI/session changes | Independent watchdog, explicit session cancellation, volatile RSA private key, bounded lifetime, cleared/wiped plaintext and packed buffers. |
 | Tampered enrollment/binaries | Protected ProgramData/ProgramFiles, owner/DACL/reparse checks, signed delegation validation, hash manifest, load/crypto/COM preflight, fail-closed setup. Unsigned personal development still depends on the OS allowing the binary; no security policy is lowered. |
-| Service/provider failure | Extra provider only; Microsoft providers preserved. No filters/default override/PIN interception. Recovery disables only project GUID/service. Real Windows failure/backup testing still required. |
+| Service/provider failure | Extra provider only; Microsoft providers preserved. No filter, permanent default override or PIN interception. Only verified approval requests the supported one-time automatic submission. Recovery disables only project GUID/service. Real Windows failure/backup testing still required. |
 | Password changes/phone key loss | Windows rejects stale password; use normal PIN/password and reenroll. No silent password update or new PIN database. |
 
 Administrator/SYSTEM compromise, a compromised OS/Keystore, same-user malware that
@@ -55,8 +55,14 @@ unlocked; sign-in does not start covert capture.
 ## Validation boundary
 
 Automated tests cover actual CNG RSA/AES-GCM, tampered keys/tags/AAD, wrong recipient,
-expired/misbound/extra-field responses, V3 status-vs-Claim frames, protected local
+expired/misbound/extra-field responses, V4 status-vs-Claim frames, protected local
 logon/unlock packing, OS online-identity credential packing, and COM fallback behavior.
+Actual COM lifecycle tests with a different test-only provider GUID/mock pipe verify
+unselected automatic requests, unchanged-user refresh, late Advise, field detach,
+one-time serialization and rejection/expiry behavior. That test DLL and executable
+are excluded from installation and packaging. A delayed pipe reader verifies that
+responses survive until consumed; bounded acknowledgement prevents a stalled
+caller from holding the server indefinitely.
 Android JVM checks verify delegated trust, exact enrolled delegation, RSA rewrap and
 CNG-to-JCA interoperability. Relay tests check authentication scope, forged messages,
 secret/private-key fields, expiry, revocation, cancellation, duplicate races and logs.

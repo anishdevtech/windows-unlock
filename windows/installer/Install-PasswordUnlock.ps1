@@ -26,11 +26,11 @@ if($Stage -eq 'Prepare'){
   try{
     New-PasswordProtectedDirectory;$taskCreated=$true
     foreach($taskFile in $taskPasswordPayload){$taskPath=Join-Path $taskPasswordTarget $taskFile;Copy-Item -LiteralPath (Join-Path $SourceDirectory $taskFile) -Destination $taskPath;if((Get-FileHash -LiteralPath $taskPath -Algorithm SHA256).Hash -ne $taskHashes[$taskFile]){throw 'Build changed during staging.'};if(-not $DevelopmentBuild -and (Get-AuthenticodeSignature -LiteralPath $taskPath).Status -ne 'Valid'){throw 'Copied publisher signature is invalid.'}}
-    @{project='WINDOWS-UNLOCK-Password';providerGuid=$taskPasswordGuid;serviceName=$taskPasswordService;developmentBuild=[bool]$DevelopmentBuild;hashes=$taskHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskPasswordTarget 'password-install.json') -Encoding UTF8
+    @{project='WINDOWS-UNLOCK-Password';providerGuid=$taskPasswordGuid;serviceName=$taskPasswordService;developmentBuild=[bool]$DevelopmentBuild;version='0.5.1';wireVersion=4;hashes=$taskHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskPasswordTarget 'password-install.json') -Encoding UTF8
     Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'PhoneUnlockPasswordCheck.exe') @('--probe') 'Windows blocked the readiness probe or built-in authentication is unavailable.'
     Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'vault_tests.exe') @('--machine') 'Protected native/machine-key cryptography test failed.'
     Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'password_provider_tests.exe') @((Join-Path $taskPasswordTarget 'CredentialProviderPassword.dll')) 'Windows blocked the DLL or Credential Provider fallback checks failed.'
-    Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'password_ipc_tests.exe') @() 'V3 IPC authorization/claim/fallback checks failed.'
+    Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'password_ipc_tests.exe') @() 'V4 IPC authorization/claim/fallback checks failed.'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Uninstall-PasswordUnlock.ps1') -Destination $taskPasswordTarget
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Password-Helpers.ps1') -Destination $taskPasswordTarget
     Write-Output 'Prepared. No tile/service is registered. Run local password enrollment next.'

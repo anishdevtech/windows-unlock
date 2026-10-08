@@ -24,6 +24,19 @@ lifecycle). Backend TypeScript build and the diagnostics test pass for the new
 allowlisted Windows rejection/success callback codes. The in-place updater parses
 in Windows PowerShell 5.1, keeps the encrypted vault/pairing, and includes rollback.
 
+Deployment `/health` now reports HTTP 200, `runtimeVersion: 0.5.1`, region `bom1`;
+all 38 backend tests pass. The 0.5.1 Windows ZIP has an explicit 17-file hash
+manifest and excludes test-only DLLs, private state and LSA packages. The updater,
+installer, build and packaging scripts parse in Windows PowerShell 5.1; the owner/
+DACL helper compiles without changing permissions during that check.
+
+The attempt to launch the in-place updater through normal Windows UAC returned
+"The operation was canceled by the user". It was not retried automatically.
+No elevated updater status file was created. Read-only checks confirm the previous
+seven installed hashes still match their old manifest, the new DLL is not installed,
+the old service remains Running/Automatic/LocalSystem and Microsoft PIN/Password
+remain enabled. **Native 0.5.1 installation and real sign-in are still pending.**
+
 Actual automatic cold boot, real Winlogon credential acceptance and notification
 delivery remain physical acceptance checks. Android 0.5 remains compatible; this
 native repair does not require a new phone installation. The previous deployment

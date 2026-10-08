@@ -3,7 +3,7 @@ param([ValidateSet('Status','Prepare','Install')][string]$Stage='Status',[string
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Password-Helpers.ps1')
 if($Stage -eq 'Status'){
-  [pscustomobject]@{mode='phone-controlled-password';serviceInstalled=[bool](Get-Service -Name $taskPasswordService -ErrorAction SilentlyContinue);tileRegistered=Test-Path -LiteralPath $taskPasswordProvider;vaultPresent=Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'WINDOWS-UNLOCK-Password\vault.dpapi');customLsaRequired=$false;systemProviders=Get-PasswordProviderInventory}
+  [pscustomobject]@{mode='phone-controlled-password';serviceInstalled=[bool](Get-Service -Name $taskPasswordService -ErrorAction SilentlyContinue);tileRegistered=Test-Path -LiteralPath $taskPasswordProvider;vaultPresent=Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'WINDOWS-UNLOCK-Password\vault.dpapi');customLsaRequired=$false;appControl=Get-PasswordAppControlStatus;systemProviders=Get-PasswordProviderInventory}
   return
 }
 Assert-PasswordAdmin
@@ -26,10 +26,10 @@ if($Stage -eq 'Prepare'){
     New-PasswordProtectedDirectory;$taskCreated=$true
     foreach($taskFile in $taskPasswordPayload){$taskPath=Join-Path $taskPasswordTarget $taskFile;Copy-Item -LiteralPath (Join-Path $SourceDirectory $taskFile) -Destination $taskPath;if((Get-FileHash -LiteralPath $taskPath -Algorithm SHA256).Hash -ne $taskHashes[$taskFile]){throw 'Build changed during staging.'};if(-not $DevelopmentBuild -and (Get-AuthenticodeSignature -LiteralPath $taskPath).Status -ne 'Valid'){throw 'Copied publisher signature is invalid.'}}
     @{project='WINDOWS-UNLOCK-Password';providerGuid=$taskPasswordGuid;serviceName=$taskPasswordService;developmentBuild=[bool]$DevelopmentBuild;hashes=$taskHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskPasswordTarget 'password-install.json') -Encoding UTF8
-    & (Join-Path $taskPasswordTarget 'PhoneUnlockPasswordCheck.exe') --probe;if($LASTEXITCODE){throw 'Windows blocked the readiness probe or built-in authentication is unavailable.'}
-    & (Join-Path $taskPasswordTarget 'vault_tests.exe') --machine;if($LASTEXITCODE){throw 'Protected native/machine-key cryptography test failed.'}
-    & (Join-Path $taskPasswordTarget 'password_provider_tests.exe') (Join-Path $taskPasswordTarget 'CredentialProviderPassword.dll');if($LASTEXITCODE){throw 'Windows blocked the DLL or Credential Provider fallback checks failed.'}
-    & (Join-Path $taskPasswordTarget 'password_ipc_tests.exe');if($LASTEXITCODE){throw 'V3 IPC authorization/claim/fallback checks failed.'}
+    Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'PhoneUnlockPasswordCheck.exe') @('--probe') 'Windows blocked the readiness probe or built-in authentication is unavailable.'
+    Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'vault_tests.exe') @('--machine') 'Protected native/machine-key cryptography test failed.'
+    Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'password_provider_tests.exe') @((Join-Path $taskPasswordTarget 'CredentialProviderPassword.dll')) 'Windows blocked the DLL or Credential Provider fallback checks failed.'
+    Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'password_ipc_tests.exe') @() 'V3 IPC authorization/claim/fallback checks failed.'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Uninstall-PasswordUnlock.ps1') -Destination $taskPasswordTarget
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Password-Helpers.ps1') -Destination $taskPasswordTarget
     Write-Output 'Prepared. No tile/service is registered. Run local password enrollment next.'
@@ -42,7 +42,7 @@ if($Stage -eq 'Prepare'){
 $taskManifest=Get-PasswordManifest
 if(-not $taskManifest.developmentBuild){foreach($taskFile in $taskPasswordPayload){if((Get-AuthenticodeSignature -LiteralPath (Join-Path $taskPasswordTarget $taskFile)).Status -ne 'Valid'){throw 'Trusted publisher signature is no longer valid. Nothing registered.'}}}
 if((Test-Path -LiteralPath $taskPasswordClsid) -or (Test-Path -LiteralPath $taskPasswordProvider) -or (Get-Service -Name $taskPasswordService -ErrorAction SilentlyContinue)){throw 'The tile/service is already registered. Nothing changed.'}
-& (Join-Path $taskPasswordTarget 'PhoneUnlockPasswordCheck.exe');if($LASTEXITCODE){throw 'Local password vault enrollment is required before registering the tile.'}
+Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'PhoneUnlockPasswordCheck.exe') @() 'Local password vault enrollment is required before registering the tile.'
 if(-not $PSCmdlet.ShouldProcess('Windows','Register only WINDOWS-UNLOCK password service and extra Credential Provider; preserve normal sign-in options')){return}
 $taskMadeService=$false;$taskMadeCom=$false;$taskMadeProvider=$false
 try{

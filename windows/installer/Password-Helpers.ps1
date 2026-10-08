@@ -5,6 +5,24 @@ $taskPasswordProviders='HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authenti
 $taskPasswordProvider=Join-Path $taskPasswordProviders $taskPasswordGuid
 $taskPasswordClsid="HKLM:\SOFTWARE\Classes\CLSID\$taskPasswordGuid"
 $taskPasswordPayload=@('CredentialProviderPassword.dll','PhoneUnlockPasswordService.exe','PhoneUnlockPasswordSetup.exe','PhoneUnlockPasswordCheck.exe','password_provider_tests.exe','password_ipc_tests.exe','vault_tests.exe')
+function Get-PasswordAppControlStatus {
+  $taskPolicy=Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -ErrorAction SilentlyContinue
+  $taskState='Unknown'
+  if($taskPolicy){switch($taskPolicy.VerifiedAndReputablePolicyState){0{$taskState='Off'}1{$taskState='On'}2{$taskState='Evaluation'}}}
+  [pscustomobject]@{smartAppControl=$taskState;settingPath='Windows Security > App & browser control > Smart App Control settings';perAppExemptionAvailable=$false;settingsChanged=$false}
+}
+function Get-PasswordLaunchFailure([string]$Program) {
+  $taskPolicy=Get-PasswordAppControlStatus
+  if($taskPolicy.smartAppControl -eq 'On'){
+    return "Windows could not launch $Program. Smart App Control is On; unsigned files may be blocked. Use a trusted publisher-signed build. For an unsigned personal-development test, the user may choose Off at $($taskPolicy.settingPath); this reduces protection system-wide and is not a per-app exemption. The installer never changes that setting. Normal Windows PIN/Password are preserved."
+  }
+  return "Windows could not launch $Program. Check Microsoft-Windows-CodeIntegrity/Operational events 3077/3033 for another App Control policy or signing block. No sign-in tile was registered by this preflight; normal Windows PIN/Password remain available."
+}
+function Invoke-PasswordNativeCheck([string]$Program,[string[]]$Arguments,[string]$Failure) {
+  try { & $Program @Arguments; $taskExit=$LASTEXITCODE }
+  catch { throw (Get-PasswordLaunchFailure ([IO.Path]::GetFileName($Program))) }
+  if($taskExit -ne 0){throw $Failure}
+}
 function Assert-PasswordAdmin {
   if(-not [Environment]::Is64BitProcess){throw 'Use 64-bit PowerShell.'}
   $taskPrincipal=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())

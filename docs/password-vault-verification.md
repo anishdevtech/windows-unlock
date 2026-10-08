@@ -20,7 +20,10 @@ Observed automated results:
   After rebuilding the harness with modal loader errors suppressed, that COM test
   passed. A subsequent bounded run of the added V3 IPC test also passed. The current
   three new-mode checks (vault crypto/packing, provider fallback, V3 IPC) pass.
-  The readiness executable is still blocked; installer preflight cannot complete.
+  A later run after the user-selected Smart App Control change passes all three
+  new-mode tests and the readiness executable. Elevated staging/enrollment remains
+  incomplete; an initial staging attempt failed before registration, and a subsequent
+  Windows administrator prompt was reported canceled. No new tile/service/vault exists.
 - Android 0.5.0 APK builds; **10 JVM tests pass**, including delegated trust, RSA
   release and actual CNG-to-JCA RSA/AES-GCM interoperability. Android lint passes
   with existing warnings. Hardware BiometricPrompt is not exercised by JVM tests.
@@ -43,11 +46,17 @@ Integrity events 3077/3033 identify a signing-level/policy violation. The test h
 now suppresses modal loader error dialogs and reports an ordinary test failure;
 this does not suppress policy enforcement. The rebuilt harness subsequently loaded
 the DLL and passed, and V3 IPC later passed. A final probe still produced Code
-Integrity 3077/3033 for `PhoneUnlockPasswordCheck.exe`. This does not establish OS
+Integrity 3077/3033 for `PhoneUnlockPasswordCheck.exe`. This was the original blocker;
+the latest read-only probe now passes with Smart App Control reporting Off before
+and after the probe on Windows 11 25H2, build 26200.9457. The active blocking policy's
+local metadata identifies `VerifiedAndReputableDesktop`. No available trusted code-
+signing identity was found in the current-user certificate store. This does not establish OS
 acceptance of all installer executables or execution inside LogonUI. No trust roots,
 LSA/Code Integrity/App Control settings or policy exemptions
-were added. Installer preflight stops before registering the tile when any required
-program is blocked. A trusted/OS-permitted release is needed for deployment here.
+were added by the software. The user-selected Smart App Control state now reads Off;
+the software did not write the policy registry or change Windows Security settings.
+Installer preflight stops before registering the tile when any required program is
+blocked. Trusted publisher signing remains the option for keeping Smart App Control On.
 
 No Windows password was entered during development. Native vault enrollment, machine
 key creation under elevation, LocalSystem execution, real Microsoft-account logon,

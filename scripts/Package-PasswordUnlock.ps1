@@ -10,6 +10,7 @@ foreach($taskName in $taskPayload){$taskFiles["Release/$taskName"]=Join-Path $ta
 foreach($taskName in @('Install-PasswordUnlock.ps1','Uninstall-PasswordUnlock.ps1','Recover-PasswordUnlock.ps1','Password-Helpers.ps1')){$taskFiles["installer/$taskName"]=Join-Path $taskRoot "windows\installer\$taskName"}
 foreach($taskName in @('password-unlock-setup.md','password-vault-security.md','password-vault-verification.md')){$taskFiles["docs/$taskName"]=Join-Path $taskRoot "docs\$taskName"}
 $taskFiles['protocol/password-vault-spec.md']=Join-Path $taskRoot 'protocol\password-vault-spec.md'
+$taskFiles['scripts/Test-PasswordUnlockReadiness.ps1']=Join-Path $taskRoot 'scripts\Test-PasswordUnlockReadiness.ps1'
 # Explicit allowlist: never collect runtime state, pairing, environment or signing files.
 foreach($taskEntry in $taskFiles.GetEnumerator()){
   if(-not(Test-Path -LiteralPath $taskEntry.Value -PathType Leaf)){throw "Missing release file: $($taskEntry.Key)"}
@@ -37,7 +38,10 @@ This bundle does not contain or install an LSA authentication package.
 No credentials or private configuration are included. Existing pairing is required.
 The supplied development binaries are unsigned; Windows can block them.
 0xc0e90002 means a Windows integrity-policy violation, not proof of a damaged DLL.
-Do not disable security policy, rename files or add development trust roots to bypass it.
+Read the guide for trusted publisher signing or the user-selected Smart App Control
+setting for unsigned personal testing. Disabling it reduces protection system-wide.
+The installer never changes security settings. Do not rename files or add development
+trust roots to evade policy. This bundle has no per-app Smart App Control exemption.
 Installer preflight fails before registering a tile if required binaries are blocked.
 Real Windows sign-in and Android hardware acceptance remain unverified; see docs.
 

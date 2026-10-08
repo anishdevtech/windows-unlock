@@ -6,7 +6,8 @@ It stores your Windows password **encrypted locally**. Your phone controls the
 decryption key. Your Windows password never goes to Android, Firebase or the relay.
 Your Android private key stays in Keystore. Windows PIN remains your normal backup.
 
-The native code is built and partially tested; OS policy blocks some native checks.
+The native code is built and partially tested; this laptop's latest unsigned-binary
+probe and three native checks pass after the user-selected Smart App Control change.
 Real LogonUI/Microsoft-account sign-in is not
 yet an accepted test result. Complete the acceptance steps below before relying on
 phone sign-in. This is a security-critical development prototype, not a certified
@@ -51,15 +52,47 @@ IPC test executable and an attempted load of `CredentialProviderPassword.dll`. T
 **0xc0e90002** means `STATUS_SYSTEM_INTEGRITY_POLICY_VIOLATION`; Code Integrity
 events 3077/3033 confirm the signing/policy block. An earlier build's successful
 DLL test does not prove the final build is allowed. A rebuilt test harness then
-loaded the DLL and passed; the V3 IPC test also subsequently passed. The final
-readiness probe remains blocked and prevents installation.
-No policy was changed.
-Installation will stop during preflight until Windows
-allows the build, for example through a trusted publisher-signed release. Do not
-rename files, add a development root, or disable security policy to bypass the block.
+loaded the DLL and passed; the V3 IPC test also subsequently passed. A later probe
+and all three new-mode native tests pass with Smart App Control now Off. The original
+policy block is resolved for those tests; installation/enrollment is a separate step.
+No policy was changed by the software.
+Installation stops during preflight if Windows blocks a required program. Use
+`scripts/Test-PasswordUnlockReadiness.ps1` for a read-only probe and policy report.
+The ZIP includes the same script. A passing probe confirms only that the readiness
+tool can run, not that a real Windows sign-in has passed.
 The signing script accepts a normal trusted code-signing identity; it does not
 require an EV certificate or Microsoft protected-LSA submission. Certificate trust
 does not guarantee acceptance under every App Control policy.
+
+### Smart App Control on your personal development laptop
+
+The observed blocking policy is `VerifiedAndReputableDesktop` (Smart App Control).
+Windows reports the unsigned readiness tool as untrusted. Smart App Control has
+**no individual-app exemption**; a Defender antivirus exclusion does not grant one.
+The option that keeps protection on is to use a trusted RSA publisher-signed build.
+
+If you choose to test this unsigned personal prototype, Windows exposes this setting:
+
+**Windows Security → App & browser control → Smart App Control settings → Off.**
+
+That reduces protection against untrusted apps **across the laptop**, not just this
+project. The installer and diagnostic script never change it. Keep Defender antivirus,
+firewall, Secure Boot, Memory Integrity, LSA protection and normal PIN/Password enabled.
+Do not rename binaries, import a development trust root or edit CI policy registry
+values as an alternative. Recent Windows updates support turning Smart App Control
+back on; read your local confirmation first because older builds can have different
+restoration requirements. Re-enabling it can block this unsigned build again, including
+after reboot; installing once does not create an exemption.
+
+After any user-selected change, rerun the readiness script and the installer preflight.
+If still blocked, inspect Code Integrity events for a separate policy instead of
+disabling more security settings. On this laptop, the latest read-only check reports
+Smart App Control **Off** and a successful readiness probe; all three new-mode native
+tests pass. Local enrollment and real sign-in still need to complete.
+
+Sources checked 2026-10-08:
+[Microsoft Smart App Control FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions),
+[Microsoft publisher-signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control).
 
 The setup stages binaries under `%ProgramFiles%\WINDOWS-UNLOCK-Password`, with only
 SYSTEM/Administrators able to write them. It then opens a local, masked Windows

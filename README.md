@@ -1,5 +1,13 @@
 # WINDOWS-UNLOCK for Windows 11
 
+Version 0.6 adds a redesigned Android dashboard with animated approvals and optional
+**Display over other apps** cards. It also installs the Windows handoff/lifecycle
+repair and allows an explicit retry after Windows rejects a consumed credential.
+See [0.6 verification and rollout](docs/runtime-verification-0.6.md). This laptop's
+native 0.6 update is installed and its service is running; physical sign-in and the
+new phone overlay still require device acceptance. The overlay's background push
+routing also requires deploying the 0.6 relay.
+
 Version 0.5 adds **phone-controlled encrypted Windows password sign-in** through
 an additional native Credential Provider and LocalSystem service. Windows' built-in
 Negotiate package checks the password. This architecture requires no custom LSA

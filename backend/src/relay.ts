@@ -44,7 +44,7 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
   };
   const pairing = async (id: string, s=store) => { requireThat(uuid(id)); const p=await s.get('device_pairings',id); requireThat(p?.active,'not_paired',403); return p; };
   app.get('/',async (_req,reply)=>reply.redirect('/health'));
-  app.get('/health', async()=>({status:'ok',mode:'approval-relay',protocolPurposes:['desktop-approval','windows-unlock','password-unlock'],runtimeVersion:'0.5.1',region:process.env.VERCEL_REGION??'local'}));
+  app.get('/health', async()=>({status:'ok',mode:'approval-relay',protocolPurposes:['desktop-approval','windows-unlock','password-unlock'],runtimeVersion:'0.6.0',region:process.env.VERCEL_REGION??'local'}));
   app.post('/v1/pairing-sessions', async req => store.transaction(async s=> {
     const w=await device(req,'windows',s); const b=req.body as any; const p=await verified(b.invitationJws,w.jwk,'pair-invitation');
     fields(p,['sessionId','windowsDeviceId','windowsName','nonce','issuedAt','expiresAt']); lifetime(p,300);
@@ -98,7 +98,7 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
     });
     const r=await store.get('authentication_requests',result.requestId);const a=await store.get('android_devices',r!.androidDeviceId);
     let delivery='not_configured';
-    if(push&&a?.fcmToken) {try{await push.send(a.fcmToken,r!.id,r!.expiresAt);delivery='sent';}catch{delivery='failed';}}
+    if(push&&a?.fcmToken) {try{await push.send(a.fcmToken,r!.id,r!.expiresAt,a.appHandledPush===true);delivery='sent';}catch{delivery='failed';}}
     return {...result,pushDelivery:delivery};
   });
   app.get('/v1/authentication-requests/pending', async req=> {
@@ -133,11 +133,12 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
   }));
   app.post('/v1/android/push-token',async req=>store.transaction(async s=>{
     const a=await device(req,'android',s);const p=await verified((req.body as any).registrationJws,a.identityJwk,'push-registration');
-    fields(p,['androidDeviceId','pairingId','token','nonce','issuedAt','expiresAt']);lifetime(p,300);
+    fields(p,['androidDeviceId','pairingId','token','nonce','issuedAt','expiresAt',...('appHandledPush' in p?['appHandledPush']:[])]);lifetime(p,300);
+    requireThat(!('appHandledPush' in p)||typeof p.appHandledPush==='boolean');
     const pair=await pairing(p.pairingId,s);requireThat(p.androidDeviceId===a.id&&pair.androidDeviceId===a.id,'forbidden',403);
     requireThat(typeof p.token==='string'&&p.token.length>20&&p.token.length<=4096&&/^[A-Za-z0-9_:\-]+$/.test(p.token));
     requireThat(!a.pushIssuedAt||p.issuedAt>=a.pushIssuedAt,'stale_registration',409);
-    a.fcmToken=p.token;a.pushIssuedAt=p.issuedAt;await s.put('android_devices',a.id,a);return {registered:!!push};
+    a.fcmToken=p.token;a.pushIssuedAt=p.issuedAt;a.appHandledPush=p.appHandledPush===true;await s.put('android_devices',a.id,a);return {registered:!!push};
   }));
   remoteRoutes(app,store,device);
   diagnosticRoutes(app,store,device);

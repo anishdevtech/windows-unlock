@@ -47,7 +47,8 @@ class PhoneMessagingService : FirebaseMessagingService() {
         if (!id.matches(Regex("[0-9a-fA-F-]{36}"))) return
         val expires = message.data["expiresAt"]?.toLongOrNull() ?: return
         val remaining = expires * 1000 - System.currentTimeMillis()
-        if (remaining <= 0 || remaining > 90000) return
+        if (remaining <= 0 || remaining > 300000) return
+        ApprovalOverlay.show(this, id, remaining)
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         Push.channel(this)
         val intent = Intent(this, MainActivity::class.java).putExtra("approvalRequestId", id).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -70,7 +71,7 @@ class PushRegistration(context: Context, parameters: WorkerParameters) : Corouti
             val token = Tasks.await(FirebaseMessaging.getInstance().token, 15, TimeUnit.SECONDS)
             val now = System.currentTimeMillis() / 1000
             val p = Protocol.message("push-registration").put("androidDeviceId", c.getString("androidDeviceId"))
-                .put("pairingId", c.getString("pairingId")).put("token", token)
+                .put("pairingId", c.getString("pairingId")).put("token", token).put("appHandledPush", true)
                 .put("nonce", Protocol.b64(ByteArray(32).also { SecureRandom().nextBytes(it) })).put("issuedAt", now).put("expiresAt", now + 300)
             val jws = Protocol.sign(Protocol.input(p), Keys.signature(c.getString("identityAlias")))
             Relay(c, c.getString("transportToken")).call("POST", "/v1/android/push-token", org.json.JSONObject().put("registrationJws", jws))

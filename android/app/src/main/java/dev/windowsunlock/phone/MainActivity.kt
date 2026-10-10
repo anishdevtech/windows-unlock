@@ -40,6 +40,11 @@ class MainActivity : FragmentActivity() {
     private var notificationRequestId: String? = null
     private var vaultRequest by mutableStateOf<JSONObject?>(null)
     private var vaultToken = ""
+    private var overlayEnabled by mutableStateOf(false)
+    private val overlayPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        overlayEnabled = android.provider.Settings.canDrawOverlays(this)
+        ApprovalOverlay.setEnabled(this, overlayEnabled)
+    }
     private var notificationSettings by mutableStateOf("")
     private var pushStatus by mutableStateOf("Popup notifications need Firebase configuration.")
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -75,55 +80,30 @@ class MainActivity : FragmentActivity() {
         catch (_: Exception) { status = "Protected configuration cannot be opened. Reset local pairing and pair again." }
         setContent {
             UnlockTheme {
-                var time by remember { mutableLongStateOf(System.currentTimeMillis() / 1000) }
-                LaunchedEffect(Unit) { while (true) { delay(1000); time = System.currentTimeMillis() / 1000 } }
-                Surface(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Spacer(Modifier.height(16.dp)); Text("WINDOWS\nUNLOCK", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
-                    Text("Your laptop, in your hands.", style = MaterialTheme.typography.titleMedium)
-                    if (BuildConfig.ALLOW_SOFTWARE_KEYS) Text("TEST MODE: software keys allowed. Not for Windows sign-in.", color = MaterialTheme.colorScheme.error)
-                    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(if (pairedName.isEmpty()) "Device pairing" else "Device: $pairedName", style = MaterialTheme.typography.titleLarge)
-                        Text(status)
-                        if (fingerprint.isNotEmpty()) Text("Pairing comparison: $fingerprint")
-                    } }
-                    vaultRequest?.let { r ->
-                        val enroll = r.getString("type") == "vault-enroll"
-                        val d = Protocol.decode(r.getString("delegationJws"))
-                        val remaining = (r.getLong("expiresAt") - time).coerceAtLeast(0)
-                        Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(if (enroll) "ENABLE PHONE SIGN-IN" else "WINDOWS LOGIN REQUEST", style = MaterialTheme.typography.labelLarge)
-                            Text(pairedName, style = MaterialTheme.typography.headlineSmall)
-                            Text("Account: ${d.getString("loginName")}\nExpires in $remaining seconds")
-                            Text(if (enroll) "Your laptop will store its Windows password encrypted. This phone's hardware-backed key will control decryption. Your password is never sent to this phone or the server. Approve only if you started setup on your laptop." else "Approval releases the key for your laptop's encrypted Windows password. Windows verifies the password normally. Your Windows PIN remains available.")
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Button(onClick = { approveVault() }, enabled = remaining > 0 && !working) { Text(if (enroll) "Enable" else "Approve") }
-                                OutlinedButton(onClick = { denyVault() }, enabled = remaining > 0 && !working) { Text("Deny") }
-                            }
+                UnlockDashboard(pairedName, config?.optBoolean("paired") == true, status, fingerprint,
+                    vaultRequest, request, working, ::approveVault, ::denyVault, ::approve, ::deny,
+                    controls = {
+                        config?.takeIf { it.optBoolean("paired") }?.let { c -> RemoteControls(c, working) { sig, label, success, cancel ->
+                            authenticate(sig, label, onCancel = cancel) { approved -> success(approved); working = false }
                         } }
-                    }
-                    request?.let { r ->
-                        val remaining = (r.getLong("expiresAt") - time).coerceAtLeast(0)
-                        Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("APPROVAL REQUEST", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
-                            Text("Unlock $pairedName", style = MaterialTheme.typography.headlineSmall)
-                            LinearProgressIndicator(progress = { (remaining.toFloat() / 60f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-                            Text("Device: $pairedName\nTime: ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(r.getLong("issuedAt") * 1000))}\nExpires in $remaining seconds")
-                            Text(if (r.getString("purpose") == "windows-unlock") "Someone is requesting access to your computer. Approval authorizes unlocking its existing Windows session." else "This request tests phone approval only; it cannot unlock Windows.")
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Button(onClick = { approve() }, enabled = remaining > 0 && !working) { Text("Approve") }
-                                OutlinedButton(onClick = { deny() }, enabled = remaining > 0 && !working) { Text("Deny") }
+                    }, settings = {
+                        Text("Floating approvals", style = MaterialTheme.typography.titleLarge)
+                        Text("Show a small request card over other apps. Tap it to review and authenticate securely.")
+                        Switch(checked = overlayEnabled, onCheckedChange = { enabled ->
+                            if (enabled && !android.provider.Settings.canDrawOverlays(this@MainActivity)) {
+                                overlayPermission.launch(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName")))
+                            } else {
+                                ApprovalOverlay.setEnabled(this@MainActivity, enabled); overlayEnabled = enabled
                             }
-                        } }
-                    }
-                    if (config?.optBoolean("paired") == true) RemoteControls(config!!, working) { sig, label, success, cancel ->
-                        authenticate(sig, label, onCancel = cancel) { approved -> success(approved); working = false }
-                    }
-                    HorizontalDivider()
+                        }, enabled = !working)
+                        Text(if (overlayEnabled) "Display over other apps enabled" else "Floating card off · notifications still available", style = MaterialTheme.typography.bodySmall)
+                        HorizontalDivider()
+
                     Text("Notifications", style = MaterialTheme.typography.titleLarge)
                     Text(notificationSettings, style = MaterialTheme.typography.bodyMedium)
                     Text(pushStatus, style = MaterialTheme.typography.bodySmall)
                     OutlinedButton(onClick = { startActivity(Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName).putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, Push.CHANNEL)) }) { Text("Open notification settings") }
-                    if (config?.optBoolean("paired") == true) Diagnostics(config!!)
+
                     OutlinedButton(onClick = {
                         if (!Push.configured(this@MainActivity)) pushStatus = "Add Firebase google-services.json and rebuild the APK. See docs/hosting.md."
                         else if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -136,7 +116,9 @@ class MainActivity : FragmentActivity() {
                     }
                     OutlinedButton(onClick = { reset() }, enabled = !working) { Text("Reset local pairing") }
                     Text("With Firebase configured, requests arrive as popups while this app is closed. Tap to verify and authenticate. Android controls notification display.\n\nWindows PIN and password remain independent backup methods.", style = MaterialTheme.typography.bodySmall)
-                } }
+
+                        if (config?.optBoolean("paired") == true) Diagnostics(config!!)
+                    })
                 if (showPairConsent) AlertDialog(onDismissRequest = { showPairConsent = false; pendingInvitation = null }, title = { Text("Confirm laptop pairing") }, text = { Text(status) },
                     confirmButton = { TextButton(onClick = { showPairConsent = false; beginPair(pendingInvitation!!); pendingInvitation = null }) { Text("Pair this laptop") } },
                     dismissButton = { TextButton(onClick = { showPairConsent = false; pendingInvitation = null }) { Text("Cancel") } })
@@ -149,8 +131,12 @@ class MainActivity : FragmentActivity() {
             while (isActive) { try { if (!working) poll() } catch (_: Exception) { status = "Phone authentication unavailable. Check connection; use Windows PIN if needed." }; delay(1000) }
         } }
     }
+    override fun onStart() { super.onStart(); ApprovalOverlay.setForeground(true) }
+    override fun onStop() { ApprovalOverlay.setForeground(false); super.onStop() }
     override fun onResume() {
         super.onResume()
+        ApprovalOverlay.dismiss()
+        overlayEnabled = ApprovalOverlay.enabled(this)
         val manager = getSystemService(android.app.NotificationManager::class.java)
         notificationSettings = when {
             !manager.areNotificationsEnabled() -> "Notifications blocked. Allow them in Android settings."
@@ -264,7 +250,7 @@ class MainActivity : FragmentActivity() {
         request = null
         lifecycleScope.launch {
             try { withContext(Dispatchers.IO) { Relay(c, c.getString("transportToken")).call("POST", "/v1/authentication-requests/${r.getString("requestId")}/responses", JSONObject().put("responseJws", token)) }
-                status = "Signed response sent. Windows verifies it independently."
+                status = if (r.getString("purpose") == "windows-unlock") "Approval delivered. Windows verifies it independently." else "Connection test approved. This test cannot unlock Windows."
             } catch (_: Exception) { status = "Delivery failed or request expired. Use Windows PIN if needed." }
             finally { working = false }
         }
@@ -308,8 +294,8 @@ class MainActivity : FragmentActivity() {
         submitVault(c, r, Protocol.sign(Protocol.input(p), Keys.signature(c.getString("identityAlias"))))
     } catch (_: Exception) { working = false; status = "Request unavailable." } }
     private fun submitVault(c: JSONObject, r: JSONObject, token: String) { vaultRequest = null
-        lifecycleScope.launch { try { withContext(Dispatchers.IO) { Relay(c, c.getString("transportToken")).call("POST", "/v1/vault-requests/${r.getString("requestId")}/responses", JSONObject().put("responseJws", token)) }; status = "Response delivered. Windows performs the sign-in." }
+        lifecycleScope.launch { try { withContext(Dispatchers.IO) { Relay(c, c.getString("transportToken")).call("POST", "/v1/vault-requests/${r.getString("requestId")}/responses", JSONObject().put("responseJws", token)) }; status = if (r.getString("type") == "vault-enroll") "Phone sign-in enabled. Finish setup on Windows." else "Key release delivered. Waiting for Windows to accept sign-in." }
             catch (_: Exception) { status = "Delivery failed. Use Windows PIN; retry setup if enrollment was interrupted." } finally { working = false } }
     }
-    private fun reset() { config?.let { c -> Keys.delete(c.getString("approvalAlias")); Keys.delete(c.getString("identityAlias")); c.optJSONObject("vaults")?.keys()?.asSequence()?.toList()?.forEach { Keys.delete(Vault.alias(it)) } }; Keys.clear(this); getSharedPreferences("push-health", MODE_PRIVATE).edit().clear().apply(); config = null; request = null; vaultRequest = null; fingerprint = ""; pairedName = ""; status = "Local pairing removed. Also select Unpair on Windows before pairing again." }
+    private fun reset() { ApprovalOverlay.setEnabled(this, false); overlayEnabled = false; config?.let { c -> Keys.delete(c.getString("approvalAlias")); Keys.delete(c.getString("identityAlias")); c.optJSONObject("vaults")?.keys()?.asSequence()?.toList()?.forEach { Keys.delete(Vault.alias(it)) } }; Keys.clear(this); getSharedPreferences("push-health", MODE_PRIVATE).edit().clear().apply(); config = null; request = null; vaultRequest = null; fingerprint = ""; pairedName = ""; status = "Local pairing removed. Also select Unpair on Windows before pairing again." }
 }

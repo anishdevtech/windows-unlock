@@ -66,7 +66,7 @@ try{
   $taskChanged=$true
   foreach($taskFile in $taskPasswordPayload){Copy-Item -LiteralPath (Join-Path $taskStage $taskFile) -Destination (Join-Path $taskPasswordTarget $taskFile) -Force}
   foreach($taskFile in @('Uninstall-PasswordUnlock.ps1','Password-Helpers.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $taskFile) -Destination (Join-Path $taskPasswordTarget $taskFile) -Force}
-  @{project='WINDOWS-UNLOCK-Password';providerGuid=$taskPasswordGuid;serviceName=$taskPasswordService;developmentBuild=[bool]$DevelopmentBuild;version='0.5.1';wireVersion=4;hashes=$taskHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskPasswordTarget 'password-install.json') -Encoding UTF8
+  @{project='WINDOWS-UNLOCK-Password';providerGuid=$taskPasswordGuid;serviceName=$taskPasswordService;developmentBuild=[bool]$DevelopmentBuild;version='0.6.0';wireVersion=4;hashes=$taskHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskPasswordTarget 'password-install.json') -Encoding UTF8
   $null=Get-PasswordManifest
   if($AutomaticRequests -ne 'Keep'){Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'PhoneUnlockPasswordCheck.exe') @('--automatic-requests',$AutomaticRequests.ToLowerInvariant()) 'Cannot change automatic requests. Use the enrolled Windows account.'}
   Invoke-PasswordNativeCheck (Join-Path $taskPasswordTarget 'PhoneUnlockPasswordCheck.exe') @('--status') 'Updated enrollment validation failed.'
@@ -74,7 +74,7 @@ try{
   (Get-Service -Name $taskPasswordService).WaitForStatus('Running',[TimeSpan]::FromSeconds(20))
   if((Get-PasswordProviderInventory) -ne $taskBefore){throw 'Another sign-in provider changed during update.'}
   $taskDone=$true
-  Write-Output 'Updated to 0.5.1. Encrypted enrollment and pairing preserved. Automatic requests use the protected policy shown above. Normal Windows PIN/Password remain available.'
+  Write-Output 'Updated to 0.6.0. Encrypted enrollment and pairing preserved. Automatic requests use the protected policy shown above. Normal Windows PIN/Password remain available.'
 }catch{
   $taskUpdateFailure=$_
   if($taskStopped){

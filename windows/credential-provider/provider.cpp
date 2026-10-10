@@ -231,6 +231,9 @@ public:
   HRESULT STDMETHODCALLTYPE ReportResult(NTSTATUS status,NTSTATUS substatus,LPWSTR* text,CREDENTIAL_PROVIDER_STATUS_ICON* icon)override{return boundary([&]()->HRESULT{if(!text||!icon)return E_POINTER;*text=nullptr;*icon=CPSI_NONE;
 #ifdef PU_PASSWORD_UNLOCK
     if(submitted_){try{auto q=request(Operation::Result,operation_);q.resultStatus=uint32_t(status);q.resultSubstatus=uint32_t(substatus);providerCall(q);}catch(...){}}
+    // A rejected handoff has consumed its credential. Permit a fresh, explicit
+    // retry instead of leaving the selected tile permanently stuck as submitted.
+    if(status!=0){revoke();automatic_=false;handoff_=false;requested_=false;state_=State::Unavailable;pending_=State::Unavailable;}
 #else
     (void)substatus;
 #endif

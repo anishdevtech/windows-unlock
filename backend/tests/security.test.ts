@@ -85,7 +85,8 @@ test('wrong binding and fake signature cannot consume pending request',async t=>
 });
 test('expired, future and excessive-lifetime requests fail',async t=>{
   const f=await fixture(t);
-  for(const o of [{issuedAt:now()-61,expiresAt:now()-1},{issuedAt:now()+60,expiresAt:now()+120},{expiresAt:now()+61}]) assert.ok((await (await f.challenge(o)).send()).statusCode>=400);
+  const timestamp=now();
+  for(const o of [{issuedAt:timestamp-61,expiresAt:timestamp-1},{issuedAt:timestamp+60,expiresAt:timestamp+120},{issuedAt:timestamp,expiresAt:timestamp+61}]) assert.ok((await (await f.challenge(o)).send()).statusCode>=400);
 });
 test('single pending request, cancellation and nonce replay rejection',async t=>{
   const f=await fixture(t),r=await f.challenge();await r.send();assert.equal((await (await f.challenge()).send()).statusCode,409);
@@ -166,10 +167,16 @@ test('camera key rejects private RSA material and invalid recipient',async t=>{
     assert.equal((await f.call('POST','/v1/remote/commands',f.at,{commandJws:await r.command('camera-start',{viewerJwk})})).statusCode,400);
 });
 test('FCM registration requires identity-key proof; push failure preserves committed request',async t=>{
-  let invoked=0;const f=await fixture(t,{async send(){invoked++;throw new Error('simulated FCM unavailable');}});
+  let invoked=0;const f=await fixture(t,{async send(_token,_id,_expiry,appHandled){invoked++;assert.equal(appHandled,true);throw new Error('simulated FCM unavailable');}});
   const registration=message('push-registration',{androidDeviceId:f.aid,pairingId:f.pair,token:'test-fcm-address-abcdefghijklmnopqrstuvwxyz',nonce:transport(),issuedAt:now(),expiresAt:now()+300});
   assert.equal((await f.call('POST','/v1/android/push-token',f.at,{registrationJws:await sign(f.w,registration)})).statusCode,400);
   assert.equal((await f.call('POST','/v1/android/push-token',f.at,{registrationJws:await sign(f.identity,registration)})).statusCode,200);
+  const upgraded={...registration,appHandledPush:true};
+  assert.equal((await f.call('POST','/v1/android/push-token',f.at,{registrationJws:await sign(f.w,upgraded)})).statusCode,400);
+  assert.equal((await f.call('POST','/v1/android/push-token',f.at,{registrationJws:await sign(f.identity,upgraded)})).statusCode,200);
+  assert.equal((await f.store.get('android_devices',f.aid))?.appHandledPush,true);
+
+  assert.equal((await f.call('POST','/v1/android/push-token',f.at,{registrationJws:await sign(f.identity,{...registration,appHandledPush:'true'})})).statusCode,400);
   const r=await f.challenge();const result=await r.send();assert.equal(result.statusCode,200);assert.equal(result.json().pushDelivery,'failed');assert.equal(invoked,1);
   assert.equal((await f.call('GET','/v1/authentication-requests/pending',f.at)).json().requestJws,r.token);
 });

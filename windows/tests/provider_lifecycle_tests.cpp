@@ -54,7 +54,12 @@ void scenario(IClassFactory* factory,bool automatic,bool lateAdvise,State termin
   CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE response{};CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION serialized{};LPWSTR message{};CREDENTIAL_PROVIDER_STATUS_ICON icon{};
   check(SUCCEEDED(credential->GetSerialization(&response,&serialized,&message,&icon))&&response==CPGSR_RETURN_CREDENTIAL_FINISHED&&serialized.cbSerialization==4&&memcmp(serialized.rgbSerialization,"test",4)==0,"One-time claim reaches Windows serialization");SecureZeroMemory(serialized.rgbSerialization,serialized.cbSerialization);CoTaskMemFree(serialized.rgbSerialization);CoTaskMemFree(message);
   check(SUCCEEDED(provider->GetCredentialCount(&count,&def,&autologon))&&!autologon&&service.claims==1&&service.begins==1,"No duplicate claim or challenge on UI refresh");
-  check(SUCCEEDED(credential->ReportResult(NTSTATUS(0xc000006d),NTSTATUS(0xc000006a),&message,&icon))&&icon==CPSI_ERROR&&message&&std::wstring(message).find(L"0xC000006D")!=std::wstring::npos,"Windows rejection is visible and reported");CoTaskMemFree(message);check(service.results==1,"Result audit reaches service");provider->UnAdvise();
+  check(SUCCEEDED(credential->ReportResult(NTSTATUS(0xc000006d),NTSTATUS(0xc000006a),&message,&icon))&&icon==CPSI_ERROR&&message&&std::wstring(message).find(L"0xC000006D")!=std::wstring::npos,"Windows rejection is visible and reported");CoTaskMemFree(message);check(service.results==1,"Result audit reaches service");
+  check(SUCCEEDED(provider->GetCredentialCount(&count,&def,&autologon))&&!autologon&&service.begins==1,"Windows rejection does not automatically send another request");
+  service.phase=State::Waiting;
+  check(SUCCEEDED(credential->GetSerialization(&response,&serialized,&message,&icon))&&response==CPGSR_NO_CREDENTIAL_NOT_FINISHED&&!serialized.rgbSerialization,"Explicit retry waits for a new phone approval");CoTaskMemFree(message);
+  pump([&]{return service.begins==2;},"Consumed credentials must allow an explicit retry");
+  check(service.claims==1,"Retry cannot reuse the previous credential");provider->UnAdvise();
 }
 int wmain(int argc,wchar_t** argv){try{
   SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);check(argc==2&&SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization");auto path=std::filesystem::absolute(argv[1]);auto dll=LoadLibraryExW(path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);check(dll!=nullptr,"Test-only provider loads");

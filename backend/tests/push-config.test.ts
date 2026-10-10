@@ -14,6 +14,17 @@ test('background hints use a private high-priority system notification',()=>{
   assert.deepEqual(Object.keys(payload.data!).sort(),['approvalRequestId','expiresAt','kind','requestId']);
 });
 
+test('capable phones receive data-only hints so background overlays and local notifications run',()=>{
+  const payload=approvalPushPayload('test-token','request-id',Math.floor(Date.now()/1000)+60,true);
+  assert.equal(payload.notification,undefined);
+  assert.equal(payload.android?.notification,undefined);
+  assert.equal(payload.android?.priority,'high');
+  assert.equal(payload.android?.restrictedPackageName,'dev.windowsunlock.phone');
+  assert.ok(payload.android!.ttl!<=60000);
+  assert.equal(payload.data?.requestId,'request-id');
+  assert.deepEqual(Object.keys(payload.data!).sort(),['approvalRequestId','expiresAt','kind','requestId']);
+});
+
 test('malformed Firebase credentials do not crash the protected relay or disclose secrets',async t=>{
   const invalid=[
     '{operator-secret',JSON.stringify({project_info:{project_id:'push-test'},client:[]}),

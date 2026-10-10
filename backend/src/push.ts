@@ -1,12 +1,12 @@
 import { initializeApp, cert, applicationDefault, getApps } from 'firebase-admin/app';
 import { getMessaging,type Message } from 'firebase-admin/messaging';
-export function approvalPushPayload(token:string,requestId:string,expiresAt:number):Message {
+export function approvalPushPayload(token:string,requestId:string,expiresAt:number,appHandled=false):Message {
   const ttl=Math.max(0,Math.min(60000,(expiresAt-Math.floor(Date.now()/1000))*1000));
-  return {token,notification:{title:'Windows login request',body:'Tap to review your laptop request and authenticate securely.'},
+  return {token,...(!appHandled?{notification:{title:'Windows login request',body:'Tap to review your laptop request and authenticate securely.'}}:{}),
     data:{kind:'approval',requestId,approvalRequestId:requestId,expiresAt:String(expiresAt)},
-    android:{priority:'high',ttl,restrictedPackageName:'dev.windowsunlock.phone',notification:{channelId:'approval_requests_v1',icon:'ic_notification',tag:requestId,visibility:'private',defaultSound:true}}};
+    android:{priority:'high',ttl,restrictedPackageName:'dev.windowsunlock.phone',...(!appHandled?{notification:{channelId:'approval_requests_v1',icon:'ic_notification',tag:requestId,visibility:'private' as const,defaultSound:true}}:{})}};
 }
-export interface PushSender { send(token:string,requestId:string,expiresAt:number):Promise<void>; }
+export interface PushSender { send(token:string,requestId:string,expiresAt:number,appHandled?:boolean):Promise<void>; }
 export function firebasePush(env:NodeJS.ProcessEnv=process.env,report:(message:string)=>void=message=>console.warn(message)):PushSender|undefined {
   const projectId=env.FIREBASE_PROJECT_ID?.trim();
   const service=env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
@@ -36,11 +36,11 @@ export function firebasePush(env:NodeJS.ProcessEnv=process.env,report:(message:s
     const name=`windows-unlock-push-${projectId}`;
     app=getApps().find(value=>value.name===name)??initializeApp({projectId,credential},name);
   }catch{return disabled('Firebase Admin could not be initialized; check protected Firebase configuration.');}
-  return {async send(token,requestId,expiresAt){
+  return {async send(token,requestId,expiresAt,appHandled){
     const ttl=Math.max(0,Math.min(60000,(expiresAt-Math.floor(Date.now()/1000))*1000));
     if(ttl<=0)return;
     let timeout:ReturnType<typeof setTimeout>|undefined;
-    try {await Promise.race([getMessaging(app).send(approvalPushPayload(token,requestId,expiresAt)),
+    try {await Promise.race([getMessaging(app).send(approvalPushPayload(token,requestId,expiresAt,appHandled)),
       new Promise<never>((_resolve,reject)=>{timeout=setTimeout(()=>reject(new Error('push_timeout')),3500);})]);}
     finally{if(timeout)clearTimeout(timeout);}
   }};

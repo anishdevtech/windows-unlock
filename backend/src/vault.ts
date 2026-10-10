@@ -50,7 +50,7 @@ export function vaultRoutes(app:FastifyInstance,store:Store,device:(q:FastifyReq
       await s.insert('vault_requests',p.requestId,row);const eventId=randomUUID();await s.insert('authentication_events',eventId,{id:eventId,requestId:p.requestId,windowsDeviceId:w.id,androidDeviceId:pair.androidDeviceId,timestamp:now(),result:'vault_request_created',snapshotPath:null});return row;
     });
     const phone=await store.get('android_devices',result.androidDeviceId); let pushDelivery='not_configured';
-    if(push&&phone?.fcmToken){try{await push.send(phone.fcmToken,result.id,result.expiresAt);pushDelivery='sent';}catch{pushDelivery='failed';}}
+    if(push&&phone?.fcmToken){try{await push.send(phone.fcmToken,result.id,result.expiresAt,phone.appHandledPush===true);pushDelivery='sent';}catch{pushDelivery='failed';}}
     return {requestId:result.id,state:'pending',pushDelivery};
   });
   app.get('/v1/vault-requests/pending',async req=>{

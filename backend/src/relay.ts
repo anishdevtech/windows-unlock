@@ -44,7 +44,7 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
   };
   const pairing = async (id: string, s=store) => { requireThat(uuid(id)); const p=await s.get('device_pairings',id); requireThat(p?.active,'not_paired',403); return p; };
   app.get('/',async (_req,reply)=>reply.redirect('/health'));
-  app.get('/health', async()=>({status:'ok',mode:'approval-relay',protocolPurposes:['desktop-approval','windows-unlock','password-unlock'],runtimeVersion:'0.6.0',region:process.env.VERCEL_REGION??'local'}));
+  app.get('/health', async()=>({status:'ok',mode:'approval-relay',protocolPurposes:['desktop-approval','windows-unlock','password-unlock'],runtimeVersion:'0.6.2',region:process.env.VERCEL_REGION??'local'}));
   app.post('/v1/pairing-sessions', async req => store.transaction(async s=> {
     const w=await device(req,'windows',s); const b=req.body as any; const p=await verified(b.invitationJws,w.jwk,'pair-invitation');
     fields(p,['sessionId','windowsDeviceId','windowsName','nonce','issuedAt','expiresAt']); lifetime(p,300);
@@ -82,7 +82,9 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
     // retry it without blocking its next pairing invitation.
     if(!p.active)return {state:'revoked'};
     p.active=false; await s.put('device_pairings',p.id,p); const phone=await s.get('android_devices',p.androidDeviceId);
-    if(phone) { phone.tokenHash='revoked'; await s.put('android_devices',phone.id,phone); }
+    // Missing token hashes cannot authenticate and do not collide in PostgreSQL's
+    // unique index. A shared "revoked" sentinel broke the second revocation.
+    if(phone) { delete phone.tokenHash; await s.put('android_devices',phone.id,phone); }
     for(const r of await s.find('authentication_requests','pairingId',p.id)) if(r.state==='pending') { r.state='cancelled'; await s.put('authentication_requests',r.id,r); }
     return {state:'revoked'};
   }));

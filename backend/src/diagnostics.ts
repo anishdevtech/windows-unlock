@@ -23,6 +23,6 @@ export function diagnosticRoutes(app:FastifyInstance,store:Store,device:(r:Fasti
   app.get('/v1/device-status',async req=>{
     const w=await device(req,'windows');const pair=(await store.find('device_pairings','windowsDeviceId',w.id)).find(p=>p.active);
     const a=pair?await store.get('android_devices',pair.androidDeviceId):undefined;
-    return {paired:!!pair,pushTokenRegistered:!!a?.fcmToken,pushRegisteredAt:a?.pushIssuedAt??null};
+    return {paired:!!pair,pairingId:pair?.id??null,androidDeviceId:pair?.androidDeviceId??null,pushTokenRegistered:!!a?.fcmToken,pushRegisteredAt:a?.pushIssuedAt??null};
   });
 }

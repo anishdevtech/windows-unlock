@@ -56,6 +56,6 @@ Json Http::call(const std::string& method,const std::string& path,const Json* bo
   if(!sent||!pin.checked||!WinHttpReceiveResponse(request,nullptr))throw std::runtime_error("Phone authentication unavailable; check TLS/network");
   DWORD status=0,size=sizeof(status);if(!WinHttpQueryHeaders(request,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&status,&size,WINHTTP_NO_HEADER_INDEX))throw std::runtime_error("Invalid relay response");
   std::string result;for(;;){char buffer[4096];DWORD count=0;if(!WinHttpReadData(request,buffer,sizeof(buffer),&count))throw std::runtime_error("Relay read failed");if(!count)break;result.append(buffer,count);if(result.size()>65536)throw std::runtime_error("Response too large");}
-  if(status<200||status>=300)throw std::runtime_error("Relay rejected request (HTTP "+std::to_string(status)+")");return result.empty()?Json::object():parse(result);
+  if(status<200||status>=300)throw RelayHttpError(status);return result.empty()?Json::object():parse(result);
 }
 }

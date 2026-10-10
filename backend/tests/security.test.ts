@@ -112,16 +112,37 @@ test('pairing proposal is single-use and secret hash is not returned',async t=>{
 
 test('owning laptop can retry revocation and create a new invitation; other callers cannot',async t=>{
   const f=await fixture(t),url=`/v1/device-pairings/${f.pair}`;
+  const before=(await f.call('GET','/v1/device-status',f.wt)).json();assert.equal(before.pairingId,f.pair);assert.equal(before.androidDeviceId,f.aid);
+  assert.equal((await f.call('GET','/v1/device-status',f.at)).statusCode,401);
   const otherId=randomUUID(),otherToken=transport(),otherKey=await key();
   await f.store.put('windows_devices',otherId,{id:otherId,name:'Other laptop',jwk:otherKey.jwk,tokenHash:hash(otherToken)});
   assert.equal((await f.call('DELETE',url,otherToken)).statusCode,403);
   assert.equal((await f.call('DELETE',url,f.wt)).statusCode,200);
   assert.equal((await f.call('DELETE',url,f.wt)).json().state,'revoked');
+  const after=(await f.call('GET','/v1/device-status',f.wt)).json();assert.equal(after.pairingId,null);assert.equal(after.androidDeviceId,null);
   assert.equal((await f.call('DELETE',url,otherToken)).statusCode,403);
   assert.equal((await f.call('DELETE',url,transport())).statusCode,401);
   assert.equal((await f.call('GET','/v1/authentication-requests/pending',f.at)).statusCode,401);
   const invitationJws=await sign(f.w,message('pair-invitation',{sessionId:randomUUID(),windowsDeviceId:f.wid,windowsName:'Test laptop',nonce:transport(),issuedAt:now(),expiresAt:now()+300}));
   assert.equal((await f.call('POST','/v1/pairing-sessions',f.wt,{invitationJws,tokenHash:hash(transport())})).statusCode,200);
+});
+
+test('revoking successive phones does not collide with legacy revoked tokens',async t=>{
+  const f=await fixture(t);
+  const legacyId=randomUUID();
+  await f.store.put('android_devices',legacyId,{id:legacyId,tokenHash:'revoked'});
+  const first=await f.call('DELETE',`/v1/device-pairings/${f.pair}`,f.wt);
+  assert.equal(first.statusCode,200,'revocation must not violate the unique phone token index');
+  assert.equal((await f.store.get('android_devices',f.aid))?.tokenHash,undefined);
+  const secondId=randomUUID(),secondPair=randomUUID(),secondToken=transport();
+  await f.store.put('android_devices',secondId,{id:secondId,tokenHash:hash(secondToken)});
+  await f.store.put('device_pairings',secondPair,{id:secondPair,windowsDeviceId:f.wid,androidDeviceId:secondId,active:true});
+  assert.equal((await f.call('DELETE',`/v1/device-pairings/${secondPair}`,f.wt)).statusCode,200);
+  assert.equal((await f.store.get('android_devices',secondId))?.tokenHash,undefined);
+  assert.equal((await f.call('DELETE',`/v1/device-pairings/${secondPair}`,f.wt)).statusCode,200);
+  assert.equal((await f.call('GET','/v1/authentication-requests/pending',f.at)).statusCode,401);
+  assert.equal((await f.call('GET','/v1/authentication-requests/pending',secondToken)).statusCode,401);
+  assert.equal((await f.store.get('android_devices',legacyId))?.tokenHash,'revoked');
 });
 test('strict parser, nested duplicate keys and oversized input',()=>{
   assert.throws(()=>strictJson('{"a":1,"a":2}'));assert.throws(()=>strictJson('{"x":{"a":1,"\\u0061":2}}'));

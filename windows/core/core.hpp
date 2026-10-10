@@ -9,6 +9,7 @@
 #include <vector>
 #include <atomic>
 #include <memory>
+#include <stdexcept>
 namespace pu {
 using Json = nlohmann::json;
 using Bytes = std::vector<unsigned char>;
@@ -47,6 +48,11 @@ public:
   PendingApproval(Json request,std::string token,Json pairing,std::chrono::steady_clock::time_point deadline);
   std::string consume(const std::string& response);
   void cancel(){pending_.store(false);}
+};
+class RelayHttpError : public std::runtime_error {
+public:
+  const unsigned status;
+  explicit RelayHttpError(unsigned value):std::runtime_error("Relay rejected request (HTTP "+std::to_string(value)+")"),status(value){}
 };
 class Http {
   struct Connection;std::shared_ptr<Connection> connection_;

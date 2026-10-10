@@ -109,6 +109,20 @@ test('pairing proposal is single-use and secret hash is not returned',async t=>{
   const f=await fixture(t);const r=await f.call('GET',`/v1/pairing-sessions/${f.sid}`,f.pt);assert.equal(r.json().tokenHash,undefined);
   assert.equal((await f.call('POST',`/v1/pairing-sessions/${f.sid}/proposal`,f.pt,{proposalJws:'x'})).statusCode,409);
 });
+
+test('owning laptop can retry revocation and create a new invitation; other callers cannot',async t=>{
+  const f=await fixture(t),url=`/v1/device-pairings/${f.pair}`;
+  const otherId=randomUUID(),otherToken=transport(),otherKey=await key();
+  await f.store.put('windows_devices',otherId,{id:otherId,name:'Other laptop',jwk:otherKey.jwk,tokenHash:hash(otherToken)});
+  assert.equal((await f.call('DELETE',url,otherToken)).statusCode,403);
+  assert.equal((await f.call('DELETE',url,f.wt)).statusCode,200);
+  assert.equal((await f.call('DELETE',url,f.wt)).json().state,'revoked');
+  assert.equal((await f.call('DELETE',url,otherToken)).statusCode,403);
+  assert.equal((await f.call('DELETE',url,transport())).statusCode,401);
+  assert.equal((await f.call('GET','/v1/authentication-requests/pending',f.at)).statusCode,401);
+  const invitationJws=await sign(f.w,message('pair-invitation',{sessionId:randomUUID(),windowsDeviceId:f.wid,windowsName:'Test laptop',nonce:transport(),issuedAt:now(),expiresAt:now()+300}));
+  assert.equal((await f.call('POST','/v1/pairing-sessions',f.wt,{invitationJws,tokenHash:hash(transport())})).statusCode,200);
+});
 test('strict parser, nested duplicate keys and oversized input',()=>{
   assert.throws(()=>strictJson('{"a":1,"a":2}'));assert.throws(()=>strictJson('{"x":{"a":1,"\\u0061":2}}'));
   assert.throws(()=>strictJson('{"x":"'+'a'.repeat(65536)+'"}'));assert.deepEqual(strictJson('{"x":[{"a":1},{"a":2}]}'),{x:[{a:1},{a:2}]});

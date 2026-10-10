@@ -76,7 +76,11 @@ export function configureApp(app:FastifyInstance,store:Store,push?:PushSender) {
     r.receiptJws=(req.body as any).receiptJws; r.state='confirmed'; await s.put('pairing_sessions',r.id,r); return {state:'confirmed'};
   }));
   app.delete('/v1/device-pairings/:id', async req=>store.transaction(async s=> {
-    const w=await device(req,'windows',s); const p=await pairing((req.params as any).id,s); requireThat(p.windowsDeviceId===w.id,'forbidden',403);
+    const w=await device(req,'windows',s); const id=(req.params as any).id; requireThat(uuid(id));
+    const p=await s.get('device_pairings',id); requireThat(p,'not_paired',403); requireThat(p.windowsDeviceId===w.id,'forbidden',403);
+    // A successful revocation response can be lost. Let only the owning laptop
+    // retry it without blocking its next pairing invitation.
+    if(!p.active)return {state:'revoked'};
     p.active=false; await s.put('device_pairings',p.id,p); const phone=await s.get('android_devices',p.androidDeviceId);
     if(phone) { phone.tokenHash='revoked'; await s.put('android_devices',phone.id,phone); }
     for(const r of await s.find('authentication_requests','pairingId',p.id)) if(r.state==='pending') { r.state='cancelled'; await s.put('authentication_requests',r.id,r); }

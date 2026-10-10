@@ -26,6 +26,14 @@ no invitation is uploaded to a QR-image service. The display closes on proposal,
 completion, cancellation, expiry or companion shutdown. Oversized invitations fall
 back to the file option.
 
+An unfinished unpair must complete before a fresh invitation is created. The
+Windows HTTP client now omits JSON Content-Type on requests with no body, so the
+relay accepts bodyless DELETE requests. Revocation is retryable by its owning
+laptop after success; another laptop still cannot revoke that pairing. Previously
+these failures could stop pairing before the QR window appeared. The regression
+test covers repeated revocation, unauthorized callers and a subsequent invitation;
+all 40 relay tests pass.
+
 Verification: Windows companion Release build passed; Android APK build, lint and
 all 14 unit tests passed, including compact/file invitation equivalence, stale and
 substituted signatures, unsafe relay origins and invalid QR inputs. Generated

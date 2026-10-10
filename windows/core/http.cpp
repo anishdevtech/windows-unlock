@@ -50,7 +50,7 @@ Json Http::call(const std::string& method,const std::string& path,const Json* bo
   if(!request.h)throw std::runtime_error("Request initialization failed");DWORD redirects=WINHTTP_OPTION_REDIRECT_POLICY_NEVER;WinHttpSetOption(request,WINHTTP_OPTION_REDIRECT_POLICY,&redirects,sizeof(redirects));
   DWORD disabled=WINHTTP_DISABLE_COOKIES|WINHTTP_DISABLE_AUTHENTICATION;WinHttpSetOption(request,WINHTTP_OPTION_DISABLE_FEATURE,&disabled,sizeof(disabled));
   PinContext pin{pin_};WinHttpSetStatusCallback(request,certificateCallback,WINHTTP_CALLBACK_STATUS_SENDING_REQUEST,0);
-  auto headers=L"Content-Type: application/json\r\nAuthorization: Bearer "+wide(token_)+L"\r\n";auto data=body?body->dump():std::string{};
+  auto headers=std::wstring(body?L"Content-Type: application/json\r\n":L"")+L"Authorization: Bearer "+wide(token_)+L"\r\n";auto data=body?body->dump():std::string{};
   BOOL sent=WinHttpSendRequest(request,headers.c_str(),DWORD(headers.size()),data.empty()?WINHTTP_NO_REQUEST_DATA:data.data(),DWORD(data.size()),DWORD(data.size()),reinterpret_cast<DWORD_PTR>(&pin));
   if(pin.rejected){request.h=nullptr;throw std::runtime_error("Relay certificate pin mismatch");}
   if(!sent||!pin.checked||!WinHttpReceiveResponse(request,nullptr))throw std::runtime_error("Phone authentication unavailable; check TLS/network");

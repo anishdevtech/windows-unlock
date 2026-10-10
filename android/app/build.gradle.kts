@@ -4,7 +4,7 @@ dependencyLocking { lockAllConfigurations() }
 android {
     namespace = "dev.windowsunlock.phone"
     compileSdk = 36
-    defaultConfig { applicationId = "dev.windowsunlock.phone"; minSdk = 30; targetSdk = 36; versionCode = 6; versionName = "0.6.0" }
+    defaultConfig { applicationId = "dev.windowsunlock.phone"; minSdk = 30; targetSdk = 36; versionCode = 7; versionName = "0.6.1" }
     buildFeatures { compose = true; buildConfig = true }
     buildTypes {
         debug { buildConfigField("boolean", "ALLOW_SOFTWARE_KEYS", providers.gradleProperty("phoneunlock.allowSoftwareKeys").orElse("false").get()) }
@@ -27,6 +27,7 @@ dependencies {
     implementation("com.nimbusds:nimbus-jose-jwt:10.5")
     implementation(platform("com.google.firebase:firebase-bom:34.4.0"))
     implementation("com.google.firebase:firebase-messaging")
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     implementation("androidx.work:work-runtime-ktx:2.10.4")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")

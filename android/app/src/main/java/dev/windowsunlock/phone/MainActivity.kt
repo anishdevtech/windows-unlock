@@ -27,10 +27,13 @@ import java.security.Signature
 import java.util.UUID
 import java.text.DateFormat
 import java.util.Date
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
 class MainActivity : FragmentActivity() {
     private var config by mutableStateOf<JSONObject?>(null)
-    private var status by mutableStateOf("Import a Windows pairing invitation to begin.")
+    private var status by mutableStateOf("Scan the pairing QR code shown on your Windows laptop.")
     private var request by mutableStateOf<JSONObject?>(null)
     private var requestToken = ""
     private var fingerprint by mutableStateOf("")
@@ -59,11 +62,7 @@ class MainActivity : FragmentActivity() {
                 val text = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { stream ->
                     val data = boundedRead(stream); String(data, Charsets.UTF_8)
                 } }
-                val bundle = Protocol.strictJson(text); val invitation = Protocol.verify(bundle.getString("invitationJws"), bundle.getJSONObject("windowsJwk"), "pair-invitation")
-                Protocol.lifetime(invitation, 300)
-                status = "Pair with ${invitation.getString("windowsName")}? Check that you exported this invitation from your own laptop."
-                pendingInvitation = bundle
-                showPairConsent = true
+                reviewInvitation(text)
             } catch (_: Exception) { status = "Invalid, expired or untrusted invitation. Export a new one from Windows." }
         }
     }
@@ -82,11 +81,20 @@ class MainActivity : FragmentActivity() {
             UnlockTheme {
                 UnlockDashboard(pairedName, config?.optBoolean("paired") == true, status, fingerprint,
                     vaultRequest, request, working, ::approveVault, ::denyVault, ::approve, ::deny,
+                    canPair = config == null, scanPairing = ::scanPairing,
+                    importPairing = { picker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
                     controls = {
                         config?.takeIf { it.optBoolean("paired") }?.let { c -> RemoteControls(c, working) { sig, label, success, cancel ->
                             authenticate(sig, label, onCancel = cancel) { approved -> success(approved); working = false }
                         } }
                     }, settings = {
+                        if (config == null) {
+                            Text("Connect your laptop", style = MaterialTheme.typography.titleLarge)
+                            Text("On Windows, choose Pair phone, then scan the code shown there.")
+                            Button(onClick = ::scanPairing, enabled = !working, modifier = Modifier.fillMaxWidth()) { Text("Scan laptop QR code") }
+                            OutlinedButton(onClick = { picker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = !working, modifier = Modifier.fillMaxWidth()) { Text("Import invitation file") }
+                            HorizontalDivider()
+                        }
                         Text("Floating approvals", style = MaterialTheme.typography.titleLarge)
                         Text("Show a small request card over other apps. Tap it to review and authenticate securely.")
                         Switch(checked = overlayEnabled, onCheckedChange = { enabled ->
@@ -109,7 +117,6 @@ class MainActivity : FragmentActivity() {
                         else if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                         else { Push.sync(this@MainActivity); pushStatus = "Popups enabled. Keep this notification channel enabled in Android settings." }
                     }, enabled = !working) { Text("Enable popup approvals") }
-                    if (config == null) Button(onClick = { picker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = config == null && !working) { Text("Import pairing invitation") }
                     if ((config?.optJSONObject("vaults")?.length() ?: 0) > 0) {
                         Text("Phone sign-in enabled for ${config?.optJSONObject("vaults")?.length()} enrollment(s). Windows stores the encrypted password locally.")
                         OutlinedButton(onClick = { showRemoveVaults = true }, enabled = !working) { Text("Remove phone sign-in keys") }
@@ -148,6 +155,29 @@ class MainActivity : FragmentActivity() {
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); notificationRequestId = intent.getStringExtra("approvalRequestId") ?: intent.getStringExtra("requestId")
         lifecycleScope.launch { try { if (!working) poll() } catch (_: Exception) { status = "Request unavailable or expired. No approval sent." } }
+    }
+    private fun reviewInvitation(text: String) {
+        if (config != null || showPairConsent) return
+        val bundle = PairingInvitation.parse(text)
+        val invitation = Protocol.decode(bundle.getString("invitationJws"))
+        status = "Pair with ${invitation.getString("windowsName")}? Continue only if this invitation came from your own laptop. You will compare the same code on both devices."
+        pendingInvitation = bundle; showPairConsent = true
+    }
+    private fun scanPairing() {
+        if (working || config != null || showPairConsent) return
+        working = true
+        status = "Point your camera at the QR code in the Windows pairing window."
+        try {
+            val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).enableAutoZoom().build()
+            GmsBarcodeScanning.getClient(this, options).startScan()
+                .addOnSuccessListener { barcode ->
+                    working = false
+                    try { reviewInvitation(barcode.rawValue ?: error("Empty QR")) }
+                    catch (_: Exception) { status = "This QR code is invalid or expired. Choose Pair phone on Windows for a fresh code." }
+                }
+                .addOnCanceledListener { working = false; status = "Scan cancelled. No pairing changes made." }
+                .addOnFailureListener { working = false; status = "Scanner unavailable. Update Google Play services and retry with internet access, or import the invitation file." }
+        } catch (_: Exception) { working = false; status = "Scanner unavailable. Import the invitation file instead." }
     }
     private fun authenticate(signature: Signature, subtitle: String, onCancel: () -> Unit = {}, success: (Signature) -> Unit) {
         val flags = BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL

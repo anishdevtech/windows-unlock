@@ -1,5 +1,9 @@
 # WINDOWS-UNLOCK for Windows 11
 
+Android and the desktop companion **0.6.1** add **QR-code pairing**. Click **Pair
+phone** on Windows and **Scan laptop QR code** on Android, then compare the code on
+both devices. File import remains available. See [QR pairing](docs/qr-pairing.md).
+
 Version 0.6 adds a redesigned Android dashboard with animated approvals and optional
 **Display over other apps** cards. It also installs the Windows handoff/lifecycle
 repair and allows an explicit retry after Windows rejects a consumed credential.

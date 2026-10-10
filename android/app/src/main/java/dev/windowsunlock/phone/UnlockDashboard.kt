@@ -28,6 +28,7 @@ import kotlinx.coroutines.delay
 fun UnlockDashboard(name: String, paired: Boolean, status: String, fingerprint: String,
     vault: JSONObject?, transport: JSONObject?, working: Boolean,
     approveVault: () -> Unit, denyVault: () -> Unit, approve: () -> Unit, deny: () -> Unit,
+    canPair: Boolean, scanPairing: () -> Unit, importPairing: () -> Unit,
     controls: @Composable () -> Unit, settings: @Composable ColumnScope.() -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
     val activeId = vault?.optString("requestId") ?: transport?.optString("requestId")
@@ -78,8 +79,12 @@ fun UnlockDashboard(name: String, paired: Boolean, status: String, fingerprint: 
                                     }
                                 } else {
                                     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) { Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text(if (working) "Working securely…" else "All clear", style = MaterialTheme.typography.titleLarge)
-                                        Text(if (paired) "A sign-in request will appear here when your laptop needs you." else "Pair your laptop in Settings to get started.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(if (working) "Working securely…" else if (canPair) "Pair in a moment." else "All clear", style = MaterialTheme.typography.titleLarge)
+                                        Text(if (paired) "A sign-in request will appear here when your laptop needs you." else "Choose Pair phone on Windows, then scan the QR code.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        if (canPair) {
+                                            Button(onClick = scanPairing, enabled = !working, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("Scan laptop QR code") }
+                                            TextButton(onClick = importPairing, enabled = !working, modifier = Modifier.fillMaxWidth()) { Text("Or import an invitation file") }
+                                        }
                                     } }
                                 }
                             }

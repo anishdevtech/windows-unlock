@@ -3,6 +3,7 @@
 #include "lock_prompt.hpp"
 #include "telemetry.hpp"
 #include "camera.hpp"
+#include "pairing_qr.hpp"
 #include <winsvc.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -23,6 +24,7 @@ LockPromptGate lockGate;DWORD sessionId{};bool sessionKnown{},sessionNotificatio
 std::filesystem::path stateDir;Json config;std::jthread worker;std::atomic<bool> cancel{false},busy{false},closing{false};HFONT font{};
 std::atomic<std::shared_ptr<PendingApproval>> active;
 constexpr UINT StatusMessage=WM_APP+1,FinishedMessage=WM_APP+2,RemoteMessage=WM_APP+3,TrayMessage=WM_APP+4,CameraMessage=WM_APP+5;
+constexpr UINT PairingQrMessage=WM_APP+6;
 void trace(const char* code,const char* level="info",const std::string& id={},int64_t duration=-1){if(telemetry)telemetry->emit(code,level,id,duration);}
 bool nativeServiceRunning(const wchar_t* name=L"WindowsUnlockService"){SC_HANDLE manager=OpenSCManagerW(nullptr,nullptr,SC_MANAGER_CONNECT);if(!manager)return false;auto service=OpenServiceW(manager,name,SERVICE_QUERY_STATUS);SERVICE_STATUS_PROCESS state{};DWORD bytes{};bool running=service&&QueryServiceStatusEx(service,SC_STATUS_PROCESS_INFO,reinterpret_cast<BYTE*>(&state),sizeof(state),&bytes)&&state.dwCurrentState==SERVICE_RUNNING;if(service)CloseServiceHandle(service);CloseServiceHandle(manager);return running;}
 bool passwordServiceRunning(){return nativeServiceRunning(L"WindowsUnlockPasswordService");}
@@ -61,11 +63,15 @@ void pair(){
   const auto created=epoch();invitation.update({{"sessionId",session},{"windowsDeviceId",config.at("id")},{"windowsName",config.at("name")},{"nonce",b64url(random(32))},{"issuedAt",created},{"expiresAt",created+300}});
   auto invitationJws=key.sign(invitation);Json body{{"invitationJws",invitationJws},{"tokenHash",hash(token)}};relay().call("POST","/v1/pairing-sessions",&body);
   auto path=stateDir/L"phone-invitation.json";Json bundle{{"relayUrl",config.at("relayUrl")},{"tlsPin",config.at("tlsPin")},{"caPem",config.at("caPem")},{"windowsJwk",key.jwk()},{"invitationJws",invitationJws},{"pairingToken",token}};write(path,bundle.dump(2));
-  status("Import this invitation in Android:\n"+utf8(path.wstring())+"\nWaiting for phone pairing (5 minutes)…");
+  auto qr=std::make_unique<PairingQrPayload>(PairingQrPayload{bundle.dump(),created+300});
+  if(PostMessageW(window,PairingQrMessage,0,reinterpret_cast<LPARAM>(qr.get())))qr.release();
+  struct CloseQr{~CloseQr(){PostMessageW(window,PairingQrMessage,0,0);}} closeQr;
+  status("Scan the QR code with the Android app.\nOr import this invitation file: "+utf8(path.wstring())+"\nWaiting for phone pairing (5 minutes)…");
   try{
     auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(300);
     while(!cancel&&!closing&&std::chrono::steady_clock::now()<deadline){auto r=relay().call("GET","/v1/pairing-sessions/"+session);
       if(r.contains("proposalJws")){auto tokenJws=r.at("proposalJws").get<std::string>();auto untrusted=decode(tokenJws);auto p=verify(tokenJws,untrusted.at("approvalJwk"),"pair-proposal");publicJwk(p.at("identityJwk"));
+        PostMessageW(window,PairingQrMessage,0,0);
         if(p.at("sessionId")!=session||p.at("windowsDeviceId")!=config.at("id")||p.at("invitationHash")!=hash(invitationJws)||p.size()!=11)throw std::runtime_error("Pairing mismatch");
         auto fingerprint=hash(invitationJws+"."+tokenJws).substr(0,16);for(auto& c:fingerprint)c=char(toupper(c));
         auto text=wide("Phone: "+p.at("phoneName").get<std::string>()+"\n\nCompare this code with the Android screen:\n"+fingerprint+"\n\nDo both codes match? Confirm only if you are pairing your own phone.");
@@ -190,11 +196,12 @@ LRESULT CALLBACK proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
   case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:{auto dc=reinterpret_cast<HDC>(wp);SetTextColor(dc,RGB(220,231,246));SetBkColor(dc,RGB(16,23,35));return reinterpret_cast<LRESULT>(background);}
   case WM_DRAWITEM:{auto item=reinterpret_cast<DRAWITEMSTRUCT*>(lp);if(item->CtlType!=ODT_BUTTON)break;auto dc=item->hDC;const bool disabled=item->itemState&ODS_DISABLED;auto brush=CreateSolidBrush(disabled?RGB(35,43,56):item->CtlID==2?RGB(50,125,242):RGB(40,56,76));FillRect(dc,&item->rcItem,brush);DeleteObject(brush);SetBkMode(dc,TRANSPARENT);SetTextColor(dc,disabled?RGB(110,125,144):RGB(240,246,255));SelectObject(dc,font);wchar_t text[100]{};GetWindowTextW(item->hwndItem,text,100);DrawTextW(dc,text,-1,&item->rcItem,DT_CENTER|DT_VCENTER|DT_SINGLELINE);if(item->itemState&ODS_FOCUS){auto r=item->rcItem;InflateRect(&r,-4,-4);DrawFocusRect(dc,&r);}return TRUE;}
   case StatusMessage:{auto text=reinterpret_cast<std::wstring*>(lp);SetWindowTextW(statusLabel,text->c_str());delete text;return 0;}
+  case PairingQrMessage:{std::unique_ptr<PairingQrPayload> payload(reinterpret_cast<PairingQrPayload*>(lp));if(!payload||closing){closePairingQr();return 0;}if(!showPairingQr(hwnd,*payload))status("QR code unavailable for this invitation. Import phone-invitation.json in Android instead.");return 0;}
   case RemoteMessage:{auto text=reinterpret_cast<std::wstring*>(lp);SetWindowTextW(remoteLabel,text->c_str());delete text;return 0;}
   case TrayMessage:if(lp==WM_LBUTTONDBLCLK){ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);}if(lp==WM_RBUTTONUP){POINT point;GetCursorPos(&point);HMENU menu=CreatePopupMenu();AppendMenuW(menu,MF_STRING,7,L"Exit WINDOWS-UNLOCK");SetForegroundWindow(hwnd);TrackPopupMenu(menu,TPM_RIGHTBUTTON,point.x,point.y,0,hwnd,nullptr);DestroyMenu(menu);}return 0;
   case FinishedMessage:if(worker.joinable())worker.join();busy=false;if(pendingCameraRevoke){config["cameraSharingEnabled"]=false;persist();pendingCameraRevoke=false;}refresh();if(!remoteAgent)startRemote();return 0;
   case WM_CLOSE:if(!closing&&config.contains("pairing")&&!busy){ShowWindow(hwnd,SW_HIDE);return 0;}closing=true;cameraAllowed=false;visibleIndicator=nullptr;remoteAgent.reset();if(cameraIndicator){DestroyWindow(cameraIndicator);cameraIndicator=nullptr;}trace("app_stopped");cancel=true;if(auto p=active.load())p->cancel();if(worker.joinable())worker.join();DestroyWindow(hwnd);return 0;
-  case WM_DESTROY:KillTimer(hwnd,1);if(sessionNotifications)WTSUnRegisterSessionNotification(hwnd);Shell_NotifyIconW(NIM_DELETE,&tray);if(titleFont)DeleteObject(titleFont);if(smallFont)DeleteObject(smallFont);if(font)DeleteObject(font);PostQuitMessage(0);return 0;
+  case WM_DESTROY:closePairingQr();KillTimer(hwnd,1);if(sessionNotifications)WTSUnRegisterSessionNotification(hwnd);Shell_NotifyIconW(NIM_DELETE,&tray);if(titleFont)DeleteObject(titleFont);if(smallFont)DeleteObject(smallFont);if(font)DeleteObject(font);PostQuitMessage(0);return 0;
   default:return DefWindowProcW(hwnd,msg,wp,lp);}return DefWindowProcW(hwnd,msg,wp,lp);}
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){

@@ -3,6 +3,10 @@
 Existing paired devices do not need to pair again. Install the APK over the old app
 to preserve pairing and phone sign-in keys.
 
+To reopen the Windows companion without a tray icon, double-click the
+**WINDOWS-UNLOCK Hosted** desktop shortcut. It restores the existing window even
+when the app is hidden or minimized, without starting a second companion.
+
 For a new pairing:
 
 1. Open the Windows companion and click **Pair phone**. A separate window displays

@@ -25,6 +25,7 @@ std::filesystem::path stateDir;Json config;std::jthread worker;std::atomic<bool>
 std::atomic<std::shared_ptr<PendingApproval>> active;
 constexpr UINT StatusMessage=WM_APP+1,FinishedMessage=WM_APP+2,RemoteMessage=WM_APP+3,TrayMessage=WM_APP+4,CameraMessage=WM_APP+5;
 constexpr UINT PairingQrMessage=WM_APP+6;
+UINT restoreWindowMessage{};
 void trace(const char* code,const char* level="info",const std::string& id={},int64_t duration=-1){if(telemetry)telemetry->emit(code,level,id,duration);}
 bool nativeServiceRunning(const wchar_t* name=L"WindowsUnlockService"){SC_HANDLE manager=OpenSCManagerW(nullptr,nullptr,SC_MANAGER_CONNECT);if(!manager)return false;auto service=OpenServiceW(manager,name,SERVICE_QUERY_STATUS);SERVICE_STATUS_PROCESS state{};DWORD bytes{};bool running=service&&QueryServiceStatusEx(service,SC_STATUS_PROCESS_INFO,reinterpret_cast<BYTE*>(&state),sizeof(state),&bytes)&&state.dwCurrentState==SERVICE_RUNNING;if(service)CloseServiceHandle(service);CloseServiceHandle(manager);return running;}
 bool passwordServiceRunning(){return nativeServiceRunning(L"WindowsUnlockPasswordService");}
@@ -137,7 +138,9 @@ void registerSessionNotifications(){
   refresh();
 }
 HWND control(const wchar_t* cls,const wchar_t* text,int x,int y,int w,int h,int id=0){auto child=CreateWindowW(cls,text,WS_CHILD|WS_VISIBLE|(std::wstring(cls)==L"BUTTON"?WS_TABSTOP|((id>=1&&id<=4)||(id>=11&&id<=13)?BS_OWNERDRAW:0):0),x,y,w,h,window,reinterpret_cast<HMENU>(INT_PTR(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);return child;}
-LRESULT CALLBACK proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
+LRESULT CALLBACK proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
+  if(restoreWindowMessage&&msg==restoreWindowMessage){ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);return 0;}
+  switch(msg){
   case WM_CREATE:{window=hwnd;font=CreateFontW(-18,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
     BOOL dark=TRUE;DwmSetWindowAttribute(hwnd,20,&dark,sizeof(dark));
     titleFont=CreateFontW(-28,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable Display");smallFont=CreateFontW(-15,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
@@ -228,9 +231,18 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     if(!args.empty())throw std::runtime_error("Unknown arguments");
     // One companion per identity/session prevents duplicate automatic notifications.
     const auto mutexName=wide("Local\\WINDOWS-UNLOCK-Companion-"+config.at("id").get<std::string>());
+    restoreWindowMessage=RegisterWindowMessageW((mutexName+L"-ShowWindow").c_str());
+    if(!restoreWindowMessage)throw std::runtime_error("Window activation unavailable");
     instanceHandle.value=CreateMutexW(nullptr,FALSE,mutexName.c_str());
     if(!instanceHandle.value)throw std::runtime_error("Instance unavailable");
-    if(GetLastError()==ERROR_ALREADY_EXISTS)return 0;
+    if(GetLastError()==ERROR_ALREADY_EXISTS){
+      if(!startupLaunch)EnumWindows([](HWND existing,LPARAM)->BOOL{
+        wchar_t className[64]{};GetClassNameW(existing,className,64);
+        if(wcscmp(className,L"PhoneUnlockDesktop")==0){DWORD processId{};GetWindowThreadProcessId(existing,&processId);AllowSetForegroundWindow(processId);PostMessageW(existing,restoreWindowMessage,0,0);}
+        return TRUE;
+      },0);
+      return 0;
+    }
     sessionKnown=ProcessIdToSessionId(GetCurrentProcessId(),&sessionId)!=FALSE;
     telemetry=std::make_shared<Telemetry>(config,stateDir);trace("app_started");trace(passwordServiceRunning()||nativeServiceRunning()?"native_ready":"native_unavailable");
     WNDCLASSW wc{};wc.lpfnWndProc=proc;wc.hInstance=instance;wc.lpszClassName=L"PhoneUnlockDesktop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hbrBackground=background;RegisterClassW(&wc);WNDCLASSW cameraClass=wc;cameraClass.lpfnWndProc=[](HWND h,UINT m,WPARAM w,LPARAM l)->LRESULT{if(m==WM_CREATE){auto text=CreateWindowW(L"STATIC",L"Live preview is sharing with your paired phone.\nStops after 60 seconds. No recording is stored.",WS_CHILD|WS_VISIBLE,18,16,440,52,h,nullptr,GetModuleHandleW(nullptr),nullptr);SendMessageW(text,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);auto stop=CreateWindowW(L"BUTTON",L"Stop sharing",WS_CHILD|WS_VISIBLE|WS_TABSTOP,18,82,200,36,h,reinterpret_cast<HMENU>(1),GetModuleHandleW(nullptr),nullptr);SendMessageW(stop,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);return 0;}if(m==WM_CLOSE||(m==WM_COMMAND&&LOWORD(w)==1)){cameraAllowed=false;visibleIndicator=nullptr;if(busy)pendingCameraRevoke=true;else{config["cameraSharingEnabled"]=false;persist();}SendMessageW(cameraCheck,BM_SETCHECK,BST_UNCHECKED,0);DestroyWindow(h);cameraIndicator=nullptr;return 0;}if(m==WM_CTLCOLORSTATIC){SetTextColor(reinterpret_cast<HDC>(w),RGB(220,231,246));SetBkColor(reinterpret_cast<HDC>(w),RGB(16,23,35));return reinterpret_cast<LRESULT>(background);}return DefWindowProcW(h,m,w,l);};cameraClass.lpszClassName=L"WindowsUnlockCameraIndicator";RegisterClassW(&cameraClass);

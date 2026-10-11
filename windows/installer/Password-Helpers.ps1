@@ -5,6 +5,17 @@ $taskPasswordProviders='HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authenti
 $taskPasswordProvider=Join-Path $taskPasswordProviders $taskPasswordGuid
 $taskPasswordClsid="HKLM:\SOFTWARE\Classes\CLSID\$taskPasswordGuid"
 $taskPasswordPayload=@('CredentialProviderPassword.dll','PhoneUnlockPasswordService.exe','PhoneUnlockPasswordSetup.exe','PhoneUnlockPasswordCheck.exe','password_provider_tests.exe','password_ipc_tests.exe','vault_tests.exe')
+function Set-PasswordServiceStartup {
+  $taskOwned=Get-CimInstance Win32_Service -Filter "Name='WindowsUnlockPasswordService'"
+  $taskExpectedExe=Join-Path $taskPasswordTarget 'PhoneUnlockPasswordService.exe'
+  if(-not $taskOwned -or $taskOwned.StartName -ne 'LocalSystem' -or $taskOwned.PathName -ne ('"'+$taskExpectedExe+'"')){throw 'Refusing startup changes for an unexpected service.'}
+  & sc.exe config $taskPasswordService start= auto | Out-Null
+  if($LASTEXITCODE){throw 'Cannot configure automatic pre-logon startup.'}
+  & sc.exe failure $taskPasswordService reset= 86400 actions= restart/5000/restart/15000/restart/60000 | Out-Null
+  if($LASTEXITCODE){throw 'Cannot configure owned service recovery.'}
+  & sc.exe failureflag $taskPasswordService 1 | Out-Null
+  if($LASTEXITCODE){throw 'Cannot enable recovery for service-reported startup failures.'}
+}
 function Get-PasswordAppControlStatus {
   $taskPolicy=Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -ErrorAction SilentlyContinue
   $taskState='Unknown'

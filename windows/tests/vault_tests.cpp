@@ -1,4 +1,5 @@
 #include "crypto.hpp"
+#include "retry.hpp"
 #include "ipc.hpp"
 #include <wincred.h>
 #include <objbase.h>
@@ -8,6 +9,11 @@
 using namespace pu;using native::require;
 template<class F>void rejected(F&& f){bool failed=false;try{f();}catch(...){failed=true;}require(failed,"Invalid vault input accepted");}
 int wmain(int argc,wchar_t** argv){try{
+  {unsigned attempts{},waits{};auto result=vault::retryRelay([&]()->Json{if(++attempts<3)throw RelayNetworkError(ERROR_WINHTTP_CANNOT_CONNECT);return Json{{"ready",true}};},[&]{++waits;});require(result.at("ready")&&attempts==3&&waits==2,"Boot network retry");}
+  {unsigned sends{},probes{},waits{};vault::publishRequest([&]()->Json{++sends;throw RelayNetworkError(ERROR_WINHTTP_CONNECTION_ERROR);},[&]()->Json{++probes;return Json{{"state","pending"}};},[&]{++waits;});require(sends==1&&probes==1&&waits==1,"Lost POST response must not duplicate challenge");}
+  {unsigned sends{},probes{};auto result=vault::publishRequest([&]()->Json{if(++sends==1)throw RelayNetworkError(ERROR_WINHTTP_NAME_NOT_RESOLVED);return Json{{"pushDelivery","sent"}};},[&]()->Json{++probes;throw RelayHttpError(404);},[]{});require(sends==2&&probes==1&&result.at("pushDelivery")=="sent","POST retry only after relay confirms request absent");}
+  {unsigned waits{};rejected([&]{vault::retryRelay([]()->Json{throw RelayNetworkError(ERROR_WINHTTP_SECURE_FAILURE);},[&]{++waits;});});rejected([&]{vault::retryRelay([]()->Json{throw RelayHttpError(403);},[&]{++waits;});});require(!waits,"TLS and authorization failures must not retry");}
+  {unsigned attempts{};rejected([&]{vault::retryRelay([&]()->Json{++attempts;throw RelayHttpError(503);},[]{throw std::runtime_error("Cancelled/deadline");});});require(attempts==1,"Cancellation/deadline stops retry");}
   vault::Secret key(random(32));const std::wstring password=L"dummy-Password-For-Test-Only-42!";auto envelope=vault::seal(key.bytes,password,"delegate-aad");auto plain=vault::open(key.bytes,envelope,"delegate-aad");
   require(plain.bytes==Bytes(reinterpret_cast<const BYTE*>(password.data()),reinterpret_cast<const BYTE*>(password.data())+password.size()*2),"Password round trip mismatch");
   rejected([&]{vault::open(random(32),envelope,"delegate-aad");});rejected([&]{vault::open(key.bytes,envelope,"different-aad");});auto tampered=envelope;tampered["tag"]=b64url(random(16));rejected([&]{vault::open(key.bytes,tampered,"delegate-aad");});

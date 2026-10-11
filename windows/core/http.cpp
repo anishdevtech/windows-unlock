@@ -53,9 +53,11 @@ Json Http::call(const std::string& method,const std::string& path,const Json* bo
   auto headers=std::wstring(body?L"Content-Type: application/json\r\n":L"")+L"Authorization: Bearer "+wide(token_)+L"\r\n";auto data=body?body->dump():std::string{};
   BOOL sent=WinHttpSendRequest(request,headers.c_str(),DWORD(headers.size()),data.empty()?WINHTTP_NO_REQUEST_DATA:data.data(),DWORD(data.size()),DWORD(data.size()),reinterpret_cast<DWORD_PTR>(&pin));
   if(pin.rejected){request.h=nullptr;throw std::runtime_error("Relay certificate pin mismatch");}
-  if(!sent||!pin.checked||!WinHttpReceiveResponse(request,nullptr))throw std::runtime_error("Phone authentication unavailable; check TLS/network");
+  if(!sent)throw RelayNetworkError(GetLastError());
+  if(!pin.checked)throw std::runtime_error("Relay certificate was not verified");
+  if(!WinHttpReceiveResponse(request,nullptr))throw RelayNetworkError(GetLastError());
   DWORD status=0,size=sizeof(status);if(!WinHttpQueryHeaders(request,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&status,&size,WINHTTP_NO_HEADER_INDEX))throw std::runtime_error("Invalid relay response");
-  std::string result;for(;;){char buffer[4096];DWORD count=0;if(!WinHttpReadData(request,buffer,sizeof(buffer),&count))throw std::runtime_error("Relay read failed");if(!count)break;result.append(buffer,count);if(result.size()>65536)throw std::runtime_error("Response too large");}
+  std::string result;for(;;){char buffer[4096];DWORD count=0;if(!WinHttpReadData(request,buffer,sizeof(buffer),&count))throw RelayNetworkError(GetLastError());if(!count)break;result.append(buffer,count);if(result.size()>65536)throw std::runtime_error("Response too large");}
   if(status<200||status>=300)throw RelayHttpError(status);return result.empty()?Json::object():parse(result);
 }
 }

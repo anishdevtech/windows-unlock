@@ -22,7 +22,14 @@ int wmain(int argc,wchar_t** argv){try{
       const auto before=GetTickCount64();check(SUCCEEDED(credential->GetSerialization(&response,&serialized,&message,&icon)),"Serialization call");check(GetTickCount64()-before<1000,"LogonUI submission does not wait for network");
       check(response==CPGSR_NO_CREDENTIAL_NOT_FINISHED&&serialized.cbSerialization==0&&serialized.rgbSerialization==nullptr&&serialized.ulAuthenticationPackage==0,"Hard gate emits no Windows credential");check(message&&std::wstring(message).find(L"PIN")!=std::wstring::npos,"PIN fallback visible");CoTaskMemFree(message);
       auto deadline=GetTickCount64()+1000;while(GetTickCount64()<deadline&&events->updates<2){MSG msg;while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}Sleep(5);}
-      check(events->updates>=2,"Selecting tile initiates request and reports unavailable service");check(!events->wrongThread,"Events delivered on original UI thread");check(SUCCEEDED(credential->SetDeselected()),"Deselect cancellation");check(SUCCEEDED(credential->UnAdvise()),"Event teardown");
+#ifdef PU_PASSWORD_UNLOCK
+      check(events->updates>=1,"Startup waiting status reaches UI without blocking PIN fallback");
+      const auto cancelBefore=GetTickCount64();check(SUCCEEDED(credential->CommandLinkClicked(6)),"Cancel pending startup discovery");check(GetTickCount64()-cancelBefore<1000,"Startup discovery cancellation remains bounded");
+      check(SUCCEEDED(provider->GetCredentialCount(&count,&def,&automatic))&&def==CREDENTIAL_PROVIDER_NO_DEFAULT&&!automatic,"Cancelled startup never auto-submits");
+#else
+      check(events->updates>=2,"Selecting tile initiates request and reports unavailable service");
+#endif
+      check(!events->wrongThread,"Events delivered on original UI thread");check(SUCCEEDED(credential->SetDeselected()),"Deselect cancellation");check(SUCCEEDED(credential->UnAdvise()),"Event teardown");
       HBITMAP bitmap{};check(SUCCEEDED(credential->GetBitmapValue(0,&bitmap))&&bitmap,"Provider icon");DeleteObject(bitmap);
     }
   }

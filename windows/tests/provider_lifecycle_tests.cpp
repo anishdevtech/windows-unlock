@@ -3,14 +3,14 @@
 #include <chrono>
 #include <thread>
 struct MockService {
-  Handle stop{event()};std::jthread worker;std::atomic<State> phase{State::Waiting};std::atomic<unsigned> begins{},claims{},results{};GUID operation{};
-  explicit MockService(bool automatic){
+  Handle stop{event()};std::jthread worker;std::atomic<State> phase{State::Waiting};std::atomic<unsigned> begins{},claims{},results{},descriptions{};unsigned unavailableDescriptions{};GUID operation{};
+  explicit MockService(bool automatic,unsigned unavailable=0):unavailableDescriptions(unavailable){
     std::promise<void> ready;auto future=ready.get_future();
     worker=std::jthread([this,automatic,promise=std::move(ready)]()mutable{try{
       auto authorize=[](HANDLE pipe,Caller& caller){DWORD pid{};if(!GetNamedPipeClientProcessId(pipe,&pid)||pid!=GetCurrentProcessId())return false;caller.processId=pid;return ProcessIdToSessionId(pid,&caller.sessionId)!=FALSE;};
       serve(L"\\\\.\\pipe\\WINDOWS-UNLOCK-Test-Provider-"+std::to_wstring(GetCurrentProcessId()),L"D:P(A;;GA;;;"+currentSid()+L")",stop.get(),authorize,[this,automatic](const Request& q,const Caller&){
         Response r;r.sid=q.sid;r.operationId=q.operationId;r.windowsSignInEnabled=1;
-        if(q.operation==Operation::Describe){r.state=State::Ready;r.reserved=automatic?AutomaticRequests:0;return r;}
+        if(q.operation==Operation::Describe){if(++descriptions<=unavailableDescriptions){r.state=State::Unavailable;return r;}r.state=State::Ready;r.reserved=automatic?AutomaticRequests:0;return r;}
         if(q.operation==Operation::Begin){++begins;operation=q.operationId;r.state=State::Waiting;return r;}
         check(IsEqualGUID(q.operationId,operation),"Request remains bound through UI refresh");
         r.state=phase.load();
@@ -31,14 +31,16 @@ struct ProviderEvents final:ICredentialProviderEvents {
   ULONG STDMETHODCALLTYPE AddRef()override{return ++refs;}ULONG STDMETHODCALLTYPE Release()override{auto n=--refs;if(!n)delete this;return n;}
   HRESULT STDMETHODCALLTYPE CredentialsChanged(UINT_PTR context)override{check(GetCurrentThreadId()==thread&&context==42,"Provider callback on advised UI thread");++changes;return setter->SetUserArray(users);}
 };
-void scenario(IClassFactory* factory,bool automatic,bool lateAdvise,State terminal){
+void scenario(IClassFactory* factory,bool automatic,bool lateAdvise,State terminal,bool delayedStart=false,unsigned unavailableDescriptions=0){
   std::cout<<"Scenario automatic="<<automatic<<" lateAdvise="<<lateAdvise<<" state="<<unsigned(terminal)<<'\n';
-  MockService service(automatic);ComPtr<ICredentialProvider> provider;check(SUCCEEDED(factory->CreateInstance(nullptr,IID_PPV_ARGS(&provider))),"Provider creation");
+  std::unique_ptr<MockService> serviceOwner;if(!delayedStart)serviceOwner=std::make_unique<MockService>(automatic,unavailableDescriptions);ComPtr<ICredentialProvider> provider;check(SUCCEEDED(factory->CreateInstance(nullptr,IID_PPV_ARGS(&provider))),"Provider creation");
   check(SUCCEEDED(provider->SetUsageScenario(CPUS_LOGON,0)),"Console scenario");ComPtr<ICredentialProviderSetUserArray> setter;check(SUCCEEDED(provider.As(&setter)),"V2 user array");
   ComPtr<Users> users;users.Attach(new Users);users->add(currentSid());check(SUCCEEDED(setter->SetUserArray(users.Get())),"User enumeration");
   ComPtr<ProviderEvents> events;events.Attach(new ProviderEvents);events->setter=setter.Get();events->users=users.Get();if(!lateAdvise)check(SUCCEEDED(provider->Advise(events.Get(),42)),"Provider advise");
   DWORD count{},def{};BOOL autologon{};check(SUCCEEDED(provider->GetCredentialCount(&count,&def,&autologon))&&count==1&&def==CREDENTIAL_PROVIDER_NO_DEFAULT&&!autologon,"No default or automatic login before approval");
   ComPtr<ICredentialProviderCredential> credential;check(SUCCEEDED(provider->GetCredentialAt(0,&credential)),"Credential identity");
+  if(delayedStart){check(SUCCEEDED(credential->SetDeselected()),"Initial UI deselection preserves service discovery");auto until=GetTickCount64()+250;pump([&]{return GetTickCount64()>=until;},"Service initially absent");serviceOwner=std::make_unique<MockService>(automatic,unavailableDescriptions);}
+  auto& service=*serviceOwner;
   if(automatic){pump([&]{return service.begins==1;});check(SUCCEEDED(credential->SetDeselected()),"Unselected background request survives UI initialization");}
   else{
     pump([&]{LPWSTR text{};auto hr=credential->GetStringValue(2,&text);bool ready=SUCCEEDED(hr)&&text&&std::wstring(text).starts_with(L"Ready");CoTaskMemFree(text);return ready;});check(service.begins==0,"Manual policy sends no background request");
@@ -64,6 +66,6 @@ void scenario(IClassFactory* factory,bool automatic,bool lateAdvise,State termin
 int wmain(int argc,wchar_t** argv){try{
   SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);check(argc==2&&SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization");auto path=std::filesystem::absolute(argv[1]);auto dll=LoadLibraryExW(path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);check(dll!=nullptr,"Test-only provider loads");
   auto entry=reinterpret_cast<HRESULT(WINAPI*)(REFCLSID,REFIID,void**)>(GetProcAddress(dll,"DllGetClassObject"));auto unload=reinterpret_cast<HRESULT(WINAPI*)()>(GetProcAddress(dll,"DllCanUnloadNow"));check(entry&&unload,"COM exports");
-  {ComPtr<IClassFactory> factory;check(SUCCEEDED(entry(ProviderId,IID_PPV_ARGS(&factory))),"Test-only GUID factory");scenario(factory.Get(),true,false,State::ApprovedSignIn);scenario(factory.Get(),true,true,State::ApprovedSignIn);scenario(factory.Get(),false,false,State::ApprovedSignIn);scenario(factory.Get(),true,false,State::Denied);scenario(factory.Get(),true,false,State::Expired);}
+  {ComPtr<IClassFactory> factory;check(SUCCEEDED(entry(ProviderId,IID_PPV_ARGS(&factory))),"Test-only GUID factory");scenario(factory.Get(),true,false,State::ApprovedSignIn);scenario(factory.Get(),true,true,State::ApprovedSignIn);scenario(factory.Get(),false,false,State::ApprovedSignIn);scenario(factory.Get(),true,false,State::Denied);scenario(factory.Get(),true,false,State::Expired);scenario(factory.Get(),true,false,State::ApprovedSignIn,true);scenario(factory.Get(),true,false,State::ApprovedSignIn,false,2);scenario(factory.Get(),false,false,State::ApprovedSignIn,true);}
   check(unload()==S_OK,"All provider workers/windows and COM references released");FreeLibrary(dll);CoUninitialize();std::cout<<"Provider lifecycle: background approval, UI refresh, late events, manual policy, one-time serialization, rejection and expiry passed. Test-only GUID/mock pipe; no registration or Windows login.\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

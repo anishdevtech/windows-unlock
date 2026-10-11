@@ -1,6 +1,10 @@
 # WINDOWS-UNLOCK
 
-Version 0.7 adds encrypted Wi-Fi phone audio → laptop speakers, laptop microphone → phone, faster camera streaming, and verified Android update downloads. See [media setup and limits](docs/media-update-0.7.md). for Windows 11
+Version 0.7.1 updates the native sign-in service/provider to 0.6.1 with retry handling
+for service and network availability at first boot. Android and the companion stay
+at 0.7.0. See [first-boot phone sign-in](docs/first-boot-sign-in.md).
+
+Version 0.7 adds encrypted Wi-Fi phone audio → laptop speakers, laptop microphone → phone, faster camera streaming, and verified Android update downloads for Windows 11. See [media setup and limits](docs/media-update-0.7.md).
 
 Windows companion and relay **0.6.2** repair repeated unpairing and stale pairing
 UI. See [root-cause diagnosis and verification](docs/pairing-diagnosis-0.6.2.md).

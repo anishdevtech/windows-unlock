@@ -1,4 +1,5 @@
 #include "broker.hpp"
+#include "retry.hpp"
 #include <wtsapi32.h>
 #include <tlhelp32.h>
 #include <objbase.h>
@@ -58,11 +59,16 @@ Response Broker::dispatch(const Request& q,const Caller& caller){Response out;ou
 }
 void Broker::run(Request q,Caller caller){std::string requestJws,id;try{
   SigningKey signer("vault-"+delegate_.at("vaultId").get<std::string>(),false,true);Ephemeral ephemeral;Http relay(config_.at("relayUrl"),config_.at("tlsPin"),config_.at("transportToken"));
-  auto payload=message("vault-unlock","password-unlock");id=uuid();{std::lock_guard lock(mutex_);requestId_=id;}payload.update(Json{{"requestId",id},{"nonce",b64url(random(32))},{"issuedAt",epoch()},{"expiresAt",expires_},{"delegationJws",config_.at("delegationJws")},{"sessionId",q.sessionId},{"usageScenario",q.scenario},{"ephemeralJwk",ephemeral.jwk()},{"wrappedKey",config_.at("wrappedKey")}});requestJws=signer.sign(payload);Json body{{"requestJws",requestJws}};auto delivery=relay.call("POST","/v1/vault-requests",&body);
+  auto context=[&]{require(!cancelled_&&std::chrono::steady_clock::now()<deadline_&&epoch()<expires_&&systemProcess(caller.processId,L"LogonUI.exe")&&contextAllowed(caller.sessionId,q.sid.data(),q.scenario),"Sign-in cancelled or expired");};
+  auto wait=[&]{if(telemetry_)telemetry_->emit("network_retry","warning",id);for(unsigned i=0;i<20;i++){context();std::this_thread::sleep_for(std::chrono::milliseconds(50));}};
+  // Boot Wi-Fi/DNS can become ready after LogonUI and this automatic service.
+  // Wait within the original 60-second approval window, never on its UI thread.
+  retryRelay([&]{context();return relay.call("GET","/health");},wait);
+  auto payload=message("vault-unlock","password-unlock");id=uuid();{std::lock_guard lock(mutex_);requestId_=id;}payload.update(Json{{"requestId",id},{"nonce",b64url(random(32))},{"issuedAt",epoch()},{"expiresAt",expires_},{"delegationJws",config_.at("delegationJws")},{"sessionId",q.sessionId},{"usageScenario",q.scenario},{"ephemeralJwk",ephemeral.jwk()},{"wrappedKey",config_.at("wrappedKey")}});requestJws=signer.sign(payload);Json body{{"requestJws",requestJws}};auto delivery=publishRequest([&]{context();return relay.call("POST","/v1/vault-requests",&body);},[&]{context();return relay.call("GET","/v1/vault-requests/"+id);},wait);
   if(telemetry_)telemetry_->emit("request_sent","info",id);
   {std::lock_guard lock(mutex_);if(!cancelled_)state_=delivery.value("pushDelivery","")=="sent"?State::Waiting:State::PushUnavailable;}
   while(!cancelled_&&std::chrono::steady_clock::now()<deadline_&&epoch()<expires_){
-    require(systemProcess(caller.processId,L"LogonUI.exe")&&contextAllowed(caller.sessionId,q.sid.data(),q.scenario),"Sign-in context changed");auto result=relay.call("GET","/v1/vault-requests/"+id);
+    auto result=retryRelay([&]{context();return relay.call("GET","/v1/vault-requests/"+id);},wait);
     if(result.contains("responseJws")&&result.at("responseJws").is_string()){
       auto p=response(result.at("responseJws"),config_.at("phoneIdentityJwk"),payload,requestJws,false);
       if(p.at("decision")=="deny"){if(telemetry_)telemetry_->emit("approval_denied","info",id);std::lock_guard lock(mutex_);clear();state_=State::Denied;return;}
@@ -75,5 +81,5 @@ void Broker::run(Request q,Caller caller){std::string requestJws,id;try{
   if(telemetry_)telemetry_->emit("approval_expired","warning",id);
   {std::lock_guard lock(mutex_);clear();state_=cancelled_?State::Cancelled:State::Expired;}
   if(!requestJws.empty()){auto cancellation=message("vault-cancel","password-unlock");cancellation.update(Json{{"requestId",id},{"challengeHash",hash(requestJws)}});Json bodyCancel{{"cancelJws",signer.sign(cancellation)}};try{relay.call("POST","/v1/vault-requests/"+id+"/cancel",&bodyCancel);}catch(...){}}
-}catch(...){if(telemetry_)telemetry_->emit("approval_failed","warning",id);std::lock_guard lock(mutex_);clear();state_=cancelled_?State::Cancelled:State::Unavailable;}}
+}catch(...){if(telemetry_)telemetry_->emit("approval_failed","warning",id);std::lock_guard lock(mutex_);clear();state_=cancelled_?State::Cancelled:(std::chrono::steady_clock::now()>=deadline_||epoch()>=expires_)?State::Expired:State::Unavailable;}}
 }

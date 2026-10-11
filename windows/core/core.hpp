@@ -54,6 +54,12 @@ public:
   const unsigned status;
   explicit RelayHttpError(unsigned value):std::runtime_error("Relay rejected request (HTTP "+std::to_string(value)+")"),status(value){}
 };
+class RelayNetworkError : public std::runtime_error {
+public:
+  const DWORD code;
+  explicit RelayNetworkError(DWORD value):std::runtime_error("Relay network unavailable"),code(value){}
+  bool transient()const{return code==ERROR_WINHTTP_TIMEOUT||code==ERROR_WINHTTP_NAME_NOT_RESOLVED||code==ERROR_WINHTTP_CANNOT_CONNECT||code==ERROR_WINHTTP_CONNECTION_ERROR||code==ERROR_WINHTTP_RESEND_REQUEST;}
+};
 class Http {
   struct Connection;std::shared_ptr<Connection> connection_;
   std::wstring host_; INTERNET_PORT port_{}; std::wstring prefix_; std::string pin_; std::string token_;

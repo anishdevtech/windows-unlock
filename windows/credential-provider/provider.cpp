@@ -50,7 +50,7 @@ class Credential final:public ICredentialProviderCredential2 {
   std::jthread worker_;std::atomic<State> pending_{State::Unavailable};State state_{State::Unavailable};
   std::mutex phoneMutex_;std::wstring phone_;bool selected_{},windowReference_{};std::atomic<bool> requested_{false};
 #ifdef PU_PASSWORD_UNLOCK
-  std::atomic<bool> automatic_{false};bool discoveryAttempted_{},handoff_{};
+  std::atomic<bool> automatic_{false},discovering_{false};bool discoveryAttempted_{},handoff_{};
 #endif
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
   std::shared_ptr<EventHub> hub_;DWORD index_{};std::string proof_;GUID operation_{};bool submitted_{};
@@ -89,16 +89,27 @@ class Credential final:public ICredentialProviderCredential2 {
 #else
     (void)discovery;if(!notification_||!selected_||requested_)return;
 #endif
-    requested_=true;stop();pending_=State::Waiting;update();GUID id{};if(FAILED(CoCreateGuid(&id))){pending_=State::Unavailable;update();return;}
+    requested_=true;stop();
+#ifdef PU_PASSWORD_UNLOCK
+    discovering_=discovery;
+#endif
+    pending_=State::Waiting;update();GUID id{};if(FAILED(CoCreateGuid(&id))){pending_=State::Unavailable;update();return;}
 #if defined(PU_WINDOWS_UNLOCK) || defined(PU_PASSWORD_UNLOCK)
     operation_=id;submitted_=false;if(selected_)hub_->selected=index_;if(hub_->ready==index_)hub_->ready=CREDENTIAL_PROVIDER_NO_DEFAULT;{std::lock_guard lock(phoneMutex_);proof_.clear();}
 #endif
     // Only local IPC on this worker; no HTTP, private keys or biometric logic in DLL.
     worker_=std::jthread([this,id,discovery](std::stop_token token){bool started=false,terminal=false;try{
 #ifdef PU_PASSWORD_UNLOCK
-      if(discovery){auto description=providerCall(request(Operation::Describe,GUID{}),token);
+      struct DiscoveryEnd{std::atomic<bool>& flag;~DiscoveryEnd(){flag=false;}} discoveryEnd{discovering_};
+      if(discovery){Response description;const auto startupDeadline=std::chrono::steady_clock::now()+std::chrono::seconds(90);
+        for(;;){
+          if(token.stop_requested())return;
+          try{description=providerCall(request(Operation::Describe,GUID{}),token);if(description.state!=State::Unavailable)break;}catch(...){if(token.stop_requested())return;}
+          if(std::chrono::steady_clock::now()>=startupDeadline){description.state=State::Unavailable;break;}
+          for(unsigned i=0;i<10&&!token.stop_requested();i++)std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
         if(description.state!=State::Ready||!(description.reserved&AutomaticRequests)){requested_=false;pending_=description.state;PostMessageW(notification_,UpdateMessage,0,0);return;}
-        automatic_=true;
+        automatic_=true;discovering_=false;
       }
 #endif
       auto reply=providerCall(request(Operation::Begin,id),token);started=reply.state==State::Waiting||reply.state==State::PushUnavailable;
@@ -169,7 +180,7 @@ public:
   HRESULT STDMETHODCALLTYPE SetDeselected()override{return boundary([&]()->HRESULT{
 #ifdef PU_PASSWORD_UNLOCK
     const bool wasSelected=selected_;selected_=false;
-    if((!wasSelected&&automatic_)||(handoff_&&!submitted_))return S_OK;automatic_=false;
+    if((!wasSelected&&(automatic_||discovering_))||(handoff_&&!submitted_))return S_OK;automatic_=false;
 #else
     selected_=false;
 #endif

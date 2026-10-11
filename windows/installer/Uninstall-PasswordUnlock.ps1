@@ -13,7 +13,7 @@ if(Get-Service -Name $taskPasswordService -ErrorAction SilentlyContinue){Stop-Se
 if((Get-PasswordProviderInventory) -ne $taskBefore){throw 'Other provider inventory changed unexpectedly. No Microsoft provider was modified by this script.'}
 if($RemoveVault){
   $taskVaultRoot=Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'WINDOWS-UNLOCK-Password'
-  if(Test-Path -LiteralPath $taskVaultRoot){Assert-PasswordPlainPath $taskVaultRoot;foreach($taskFile in @('vault.dpapi','diagnostics-pending.dpapi')){Remove-Item -LiteralPath (Join-Path $taskVaultRoot $taskFile) -ErrorAction SilentlyContinue};Remove-Item -LiteralPath $taskVaultRoot -ErrorAction SilentlyContinue}
+  if(Test-Path -LiteralPath $taskVaultRoot){Assert-PasswordPlainPath $taskVaultRoot;foreach($taskFile in @('vault.dpapi','diagnostics-pending.dpapi','signin-success.json')){Remove-Item -LiteralPath (Join-Path $taskVaultRoot $taskFile) -ErrorAction SilentlyContinue};Remove-Item -LiteralPath $taskVaultRoot -ErrorAction SilentlyContinue}
   Write-Output 'Encrypted vault and diagnostics queue removed. In Android select Remove phone sign-in keys. The nonexportable machine signing key has no password-decryption capability.'
 }
 if(-not $KeepFiles){

@@ -25,4 +25,17 @@ void store(const Json& c){validate(c);Local sd;require(ConvertStringSecurityDesc
   auto text=c.dump();DATA_BLOB input{DWORD(text.size()),reinterpret_cast<BYTE*>(text.data())},blob{};auto result=CryptProtectData(&input,L"WINDOWS-UNLOCK phone-controlled password ciphertext",nullptr,nullptr,nullptr,CRYPTPROTECT_LOCAL_MACHINE|CRYPTPROTECT_UI_FORBIDDEN,&blob);SecureZeroMemory(text.data(),text.size());require(result,"Vault protection failed");Local memory{blob.pbData};auto temporary=path/wide("vault-"+uuid()+".tmp");
   try{{Handle f(CreateFileW(temporary.c_str(),GENERIC_WRITE|READ_CONTROL,0,&sa,CREATE_NEW,FILE_FLAG_OPEN_REPARSE_POINT,nullptr));require(bool(f),"Vault commit failed");check(f.get());DWORD written{};require(WriteFile(f.get(),blob.pbData,blob.cbData,&written,nullptr)&&written==blob.cbData&&FlushFileBuffers(f.get()),"Vault commit failed");}require(MoveFileExW(temporary.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH),"Vault commit failed");}catch(...){DeleteFileW(temporary.c_str());throw;}
 }
+void storeSuccessReceipt(const std::string& bundle,const std::wstring& sid){
+  require(validSid(sid)&&bundle.size()<16384,"Invalid cosmetic receipt");
+  // The existing protected vault directory is never made readable or writable.
+  // Only this signed, password-free receipt grants the enrolled account read access.
+  auto root=checked(directory(),FILE_READ_ATTRIBUTES);
+  Local sd;auto sddl=L"O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;"+sid+L")";
+  require(ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(),SDDL_REVISION_1,reinterpret_cast<PSECURITY_DESCRIPTOR*>(&sd.p),nullptr),"Receipt ACL failed");
+  SECURITY_ATTRIBUTES sa{sizeof(sa),sd.p,FALSE};auto temporary=directory()/wide("receipt-"+uuid()+".tmp");
+  try{
+    {Handle f(CreateFileW(temporary.c_str(),GENERIC_WRITE,0,&sa,CREATE_NEW,FILE_FLAG_OPEN_REPARSE_POINT,nullptr));require(bool(f),"Receipt unavailable");DWORD count{};require(WriteFile(f.get(),bundle.data(),DWORD(bundle.size()),&count,nullptr)&&count==bundle.size()&&FlushFileBuffers(f.get()),"Receipt write failed");}
+    require(MoveFileExW(temporary.c_str(),(directory()/L"signin-success.json").c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH),"Receipt commit failed");
+  }catch(...){DeleteFileW(temporary.c_str());throw;}
+}
 }

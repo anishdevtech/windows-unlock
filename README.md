@@ -1,8 +1,10 @@
 # WINDOWS-UNLOCK
 
-Version 0.7.1 updates the native sign-in service/provider to 0.6.1 with retry handling
-for service and network availability at first boot. Android and the companion stay
-at 0.7.0. See [first-boot phone sign-in](docs/first-boot-sign-in.md).
+Version 0.7.2 adds **Windows Unlock** to Start search, restores the companion from
+the background, and shows an optional animation after confirmed phone sign-in.
+Native service/provider 0.6.2 includes the first-boot readiness fix; Android remains
+0.7.0. See [installation and animation](docs/windows-launch-and-animation.md) and
+[first-boot phone sign-in](docs/first-boot-sign-in.md).
 
 Version 0.7 adds encrypted Wi-Fi phone audio → laptop speakers, laptop microphone → phone, faster camera streaming, and verified Android update downloads for Windows 11. See [media setup and limits](docs/media-update-0.7.md).
 

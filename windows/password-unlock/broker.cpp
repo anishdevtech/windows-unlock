@@ -49,7 +49,9 @@ Response Broker::dispatch(const Request& q,const Caller& caller){Response out;ou
     active_=true;try{worker_=std::jthread([this,q,caller]{struct End{std::atomic<bool>& flag;~End(){flag=false;}} end{active_};run(q,caller);});}catch(...){active_=false;std::lock_guard lock(mutex_);state_=State::Unavailable;}out.state=State::Waiting;return out;
   }
   std::lock_guard lock(mutex_);if(!same(q,caller))return out;
-  if(q.operation==Operation::Result){if(claimed_&&!resultReported_){resultReported_=true;if(telemetry_)telemetry_->emit(q.resultStatus?"windows_signin_failed":"windows_result_success",q.resultStatus?"error":"info",requestId_);}out.state=state_;return out;}
+  if(q.operation==Operation::Result){if(claimed_&&!resultReported_){resultReported_=true;if(telemetry_)telemetry_->emit(q.resultStatus?"windows_signin_failed":"windows_result_success",q.resultStatus?"error":"info",requestId_);
+    if(!q.resultStatus)try{auto receipt=message("signin-success","password-unlock");wchar_t operation[40]{};StringFromGUID2(q.operationId,operation,40);receipt.update({{"windowsDeviceId",delegate_.at("windowsDeviceId")},{"pairingId",delegate_.at("pairingId")},{"windowsAccountSid",delegate_.at("windowsAccountSid")},{"sessionId",q.sessionId},{"requestId",requestId_},{"operationId",utf8(operation)},{"timestamp",epoch()}});SigningKey signer("vault-"+delegate_.at("vaultId").get<std::string>(),false,true);storeSuccessReceipt(Json{{"delegationJws",config_.at("delegationJws")},{"receiptJws",signer.sign(receipt)}}.dump(),wide(delegate_.at("windowsAccountSid")));}catch(...){/* A cosmetic effect must never affect Windows sign-in. */}
+  }out.state=state_;return out;}
   if(q.operation==Operation::Cancel){cancelled_=true;state_=State::Cancelled;clear();}
   if(std::chrono::steady_clock::now()>=deadline_||epoch()>=expires_){cancelled_=true;state_=State::Expired;clear();}
   if(q.operation==Operation::Claim&&state_==State::ApprovedSignIn){

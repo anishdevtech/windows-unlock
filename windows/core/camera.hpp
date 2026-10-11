@@ -8,6 +8,6 @@ unsigned cameraDeviceCount();
 class Camera {
   struct Impl;std::unique_ptr<Impl> impl_;
 public:
-  Camera(std::chrono::steady_clock::time_point deadline,std::function<bool()> permitted);~Camera();Bytes frame();
+  Camera(std::chrono::steady_clock::time_point deadline,std::function<bool()> permitted,unsigned width=320,unsigned height=240);~Camera();Bytes frame();
 };
 }

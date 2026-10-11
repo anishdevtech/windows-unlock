@@ -1,17 +1,20 @@
 [CmdletBinding()]
-param([switch]$UnsignedPrototype)
+param([switch]$UnsignedPrototype,[string]$CompanionPath)
 $ErrorActionPreference='Stop'
 $taskRoot=Split-Path -Parent $PSScriptRoot
+if(-not $CompanionPath){$CompanionPath=Join-Path $taskRoot 'build\windows\Release\phoneunlock.exe'}
 $taskOutput=Join-Path $taskRoot 'build\artifacts'
 $taskStage=Join-Path $taskOutput ('password-package-'+[Guid]::NewGuid().ToString('N'))
 $taskPayload=@('CredentialProviderPassword.dll','PhoneUnlockPasswordService.exe','PhoneUnlockPasswordSetup.exe','PhoneUnlockPasswordCheck.exe','password_provider_tests.exe','password_ipc_tests.exe','vault_tests.exe')
 $taskFiles=@{}
 foreach($taskName in $taskPayload){$taskFiles["Release/$taskName"]=Join-Path $taskRoot "build\windows\Release\$taskName"}
-$taskFiles['Companion/phoneunlock.exe']=Join-Path $taskRoot 'build\windows\Release\phoneunlock.exe'
+$taskFiles['Companion/phoneunlock.exe']=$CompanionPath
 $taskFiles['licenses/qrcodegen-MIT.txt']=Join-Path $taskRoot 'windows\third-party\qrcodegen\LICENSE.txt'
 foreach($taskName in @('Install-PasswordUnlock.ps1','Update-PasswordUnlock.ps1','Uninstall-PasswordUnlock.ps1','Recover-PasswordUnlock.ps1','Password-Helpers.ps1')){$taskFiles["installer/$taskName"]=Join-Path $taskRoot "windows\installer\$taskName"}
-foreach($taskName in @('password-unlock-setup.md','password-vault-security.md','password-vault-verification.md','runtime-verification-0.6.md','qr-pairing.md','pairing-diagnosis-0.6.2.md')){$taskFiles["docs/$taskName"]=Join-Path $taskRoot "docs\$taskName"}
+foreach($taskName in @('password-unlock-setup.md','password-vault-security.md','password-vault-verification.md','runtime-verification-0.6.md','qr-pairing.md','pairing-diagnosis-0.6.2.md','media-update-0.7.md')){$taskFiles["docs/$taskName"]=Join-Path $taskRoot "docs\$taskName"}
 $taskFiles['protocol/password-vault-spec.md']=Join-Path $taskRoot 'protocol\password-vault-spec.md'
+$taskFiles['protocol/media-spec.md']=Join-Path $taskRoot 'protocol\media-spec.md'
+$taskFiles['scripts/Enable-DirectMedia.ps1']=Join-Path $taskRoot 'scripts\Enable-DirectMedia.ps1'
 $taskFiles['scripts/Test-PasswordUnlockReadiness.ps1']=Join-Path $taskRoot 'scripts\Test-PasswordUnlockReadiness.ps1'
 # Explicit allowlist: never collect runtime state, pairing, environment or signing files.
 foreach($taskEntry in $taskFiles.GetEnumerator()){
@@ -31,12 +34,14 @@ try{
     $taskHashes[$taskEntry.Key]=(Get-FileHash -LiteralPath $taskDestination -Algorithm SHA256).Hash.ToLowerInvariant()
   }
   $taskCommit=(& git -C $taskRoot rev-parse HEAD).Trim();if($LASTEXITCODE){throw 'Cannot identify source commit.'}
-  @{project='WINDOWS-UNLOCK';version='0.6.2';companionVersion='0.6.2';androidVersion='0.6.1';nativeSignInVersion='0.6.0';unsignedPrototype=[bool]$UnsignedPrototype;sourceCommit=$taskCommit;sha256=$taskHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskStage 'manifest.json') -Encoding UTF8
+  @{project='WINDOWS-UNLOCK';version='0.7.0';companionVersion='0.7.0';androidVersion='0.7.0';nativeSignInVersion='0.6.0';unsignedPrototype=[bool]$UnsignedPrototype;sourceCommit=$taskCommit;sha256=$taskHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskStage 'manifest.json') -Encoding UTF8
   @'
-WINDOWS-UNLOCK 0.6.2 - Windows companion pairing-state and relay revocation repair
+WINDOWS-UNLOCK 0.7.0 - Encrypted Wi-Fi audio, faster video and Android updates
 
 See docs/qr-pairing.md for Scan laptop QR code and the invitation-file fallback.
-The native sign-in service/provider remain at 0.6.0; Android remains 0.6.1.
+The native sign-in service/provider remain at 0.6.0. Install Android 0.7.0.
+See docs/media-update-0.7.md for audio/video controls and one-time Wi-Fi setup.
+The existing native provider/service do not need reinstalling for media features.
 This update preserves existing pairing and encrypted password enrollment. Choosing
 Unpair and creating a NEW pairing requires new password enrollment for that phone.
 See docs/pairing-diagnosis-0.6.2.md for the diagnosed failure and verification.
@@ -53,7 +58,8 @@ setting for unsigned personal testing. Disabling it reduces protection system-wi
 The installer never changes security settings. Do not rename files or add development
 trust roots to evade policy. This bundle has no per-app Smart App Control exemption.
 Installer preflight fails before registering a tile if required binaries are blocked.
-Real Windows sign-in and Android hardware acceptance remain unverified; see docs.
+Phone sign-in succeeded on this laptop during the pairing repair. New media
+features passed automated checks; physical phone media acceptance remains pending.
 
 Run from extracted bundle in administrator PowerShell only after reading the guide:
   .\installer\Install-PasswordUnlock.ps1 -Stage Prepare -DevelopmentBuild -RecoveryVerified
@@ -62,13 +68,13 @@ Register the extra tile only after enrollment succeeds, as described in the guid
 
 For an existing enrolled 0.5 installation, preserve pairing and encrypted password:
   .\installer\Update-PasswordUnlock.ps1 -DevelopmentBuild -RecoveryVerified -AutomaticRequests On
-No new password enrollment is required. Install Android 0.6.1 for QR pairing, UI and overlay.
+No new password enrollment is required. Install Android 0.7.0 for QR pairing, overlay, audio/video and update checks.
 '@ | Set-Content -LiteralPath (Join-Path $taskStage 'README.txt') -Encoding UTF8
-  $taskZip=Join-Path $taskOutput 'WINDOWS-UNLOCK-0.6.2-Windows-prototype.zip'
+  $taskZip=Join-Path $taskOutput 'WINDOWS-UNLOCK-0.7.0-Windows-prototype.zip'
   Compress-Archive -LiteralPath (Get-ChildItem -LiteralPath $taskStage | ForEach-Object FullName) -DestinationPath $taskZip -Force
-  $taskApk=Join-Path $taskOutput 'WINDOWS-UNLOCK-0.6.1-debug.apk'
+  $taskApk=Join-Path $taskOutput 'WINDOWS-UNLOCK-0.7.0-debug.apk'
   Copy-Item -LiteralPath $taskApkSource -Destination $taskApk -Force
-  @($taskZip,$taskApk) | ForEach-Object {"$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_))"} | Set-Content -LiteralPath (Join-Path $taskOutput 'WINDOWS-UNLOCK-0.6.2-SHA256SUMS.txt') -Encoding ASCII
+  @($taskZip,$taskApk) | ForEach-Object {"$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_))"} | Set-Content -LiteralPath (Join-Path $taskOutput 'WINDOWS-UNLOCK-0.7.0-SHA256SUMS.txt') -Encoding ASCII
   Write-Output $taskZip
   Write-Output $taskApk
 }finally{

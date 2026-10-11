@@ -1,5 +1,6 @@
 #include "core.hpp"
 #include "remote.hpp"
+#include "media.hpp"
 #include "lock_prompt.hpp"
 #include <iostream>
 #include <functional>
@@ -21,6 +22,7 @@ int main(int argc,char**argv){try{
   expect(gate.onLock(true,true,false,true,now+std::chrono::seconds(60)),"New lock after cooldown");gate.unlock();
   gate.observeLocked();expect(!gate.onLock(true,true,false,true,now+std::chrono::seconds(120)),"Startup locked state never triggers");
   expect(hash("abc")=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","SHA256 vector");
+  {auto master=random(32);auto up=mediaKey(master,"up"),down=mediaKey(master,"down");expect(up!=down,"Directional media keys differ");Bytes pcm{2,0,1,2,3};auto frame=encryptCameraFrame(up,pcm,"media-test:up",7,{});expect(decryptMediaPacket(up,frame,"media-test:up")==pcm,"CNG media roundtrip");rejects([&]{decryptMediaPacket(down,frame,"media-test:up");});rejects([&]{decryptMediaPacket(up,frame,"media-test:down");});frame["sequence"]=8;rejects([&]{decryptMediaPacket(up,frame,"media-test:up");});}
   for(size_t n=1;n<128;n++){auto b=random(n);expect(unb64url(b64url(b))==b,"Base64 roundtrip");}
   rejects([]{parse("{\"a\":1,\"a\":2}");});rejects([]{unb64url("AA==");});
   const auto id=uuid();{SigningKey key(id,true);auto p=message("auth-response");p["decision"]="approve";auto t=key.sign(p);expect(verify(t,key.jwk(),"auth-response")==p,"CNG roundtrip");
@@ -38,6 +40,7 @@ int main(int argc,char**argv){try{
     RemoteLease oldLease(offer,offerToken,pairing,std::chrono::steady_clock::now());rejects([&]{oldLease.consume(commandToken);});RemoteLease parallelLease(offer,offerToken,pairing,deadline);accepted=0;auto remoteConsume=[&]{try{parallelLease.consume(commandToken);accepted++;}catch(...){}};std::thread third(remoteConsume),fourth(remoteConsume);third.join();fourth.join();expect(accepted==1,"Atomic remote replay protection");
     if(argc==3&&std::string(argv[1])=="--interop"){auto fixture=parse(read(wide(argv[2])));verify(fixture.at("token"),fixture.at("jwk"),"auth-response");auto out=message("auth-response");out["test"]="windows-to-node";Json result{{"jwk",key.jwk()},{"token",key.sign(out)}};
       if(fixture.contains("cameraJwk")){auto secret=random(32);auto wrapped=wrapCameraKey(fixture.at("cameraJwk"),secret);Bytes testImage{'c','a','m','e','r','a'};result["cameraFrame"]=encryptCameraFrame(secret,testImage,"test-session",1,wrapped);SecureZeroMemory(secret.data(),secret.size());}
+      if(fixture.contains("mediaMaster")){auto master=unb64url(fixture.at("mediaMaster"));auto up=mediaKey(master,"up"),down=mediaKey(master,"down");expect(decryptMediaPacket(up,fixture.at("mediaUp"),"interop:up")==Bytes({2,1,2,3}),"JCA to CNG media");result["mediaDown"]=encryptCameraFrame(down,Bytes({2,4,5,6}),"interop:down",2,{});}
       write(wide(std::string(argv[2])+".windows.json"),result.dump());}
   }
   NCRYPT_PROV_HANDLE prov{};NCRYPT_KEY_HANDLE testKey{};NCryptOpenStorageProvider(&prov,MS_KEY_STORAGE_PROVIDER,0);auto name=wide("WINDOWS-UNLOCK-"+id);if(NCryptOpenKey(prov,&testKey,name.c_str(),0,0)==0)NCryptDeleteKey(testKey,0);NCryptFreeObject(prov);

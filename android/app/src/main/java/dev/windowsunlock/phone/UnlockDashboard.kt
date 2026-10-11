@@ -29,8 +29,9 @@ fun UnlockDashboard(name: String, paired: Boolean, status: String, fingerprint: 
     vault: JSONObject?, transport: JSONObject?, working: Boolean,
     approveVault: () -> Unit, denyVault: () -> Unit, approve: () -> Unit, deny: () -> Unit,
     canPair: Boolean, scanPairing: () -> Unit, importPairing: () -> Unit,
-    controls: @Composable () -> Unit, settings: @Composable ColumnScope.() -> Unit) {
+    controls: @Composable () -> Unit, settings: @Composable ColumnScope.() -> Unit, updatesRequest: Int = 0) {
     var tab by remember { mutableIntStateOf(0) }
+    LaunchedEffect(updatesRequest) { if (updatesRequest > 0) tab = 2 }
     val activeId = vault?.optString("requestId") ?: transport?.optString("requestId")
     LaunchedEffect(activeId) { if (activeId != null) tab = 0 }
     var now by remember { mutableLongStateOf(System.currentTimeMillis() / 1000) }

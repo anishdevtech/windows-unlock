@@ -69,11 +69,14 @@ class MainActivity : FragmentActivity() {
     private var pendingInvitation: JSONObject? = null
     private var showPairConsent by mutableStateOf(false)
     private var showRemoveVaults by mutableStateOf(false)
+    private var updatesRequest by mutableIntStateOf(0)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent.getBooleanExtra("showUpdates", false)) updatesRequest++
         try { Keys.cleanupCameraKeys() } catch (_: Exception) { /* No viewer is resumed across activity restarts. */ }
         notificationRequestId = intent.getStringExtra("approvalRequestId") ?: intent.getStringExtra("requestId")
         Push.channel(this)
+        AppUpdates.schedule(this)
         if (Push.configured(this)) { pushStatus = "Firebase configured. Enable popup approvals below."; Push.sync(this) }
         try { config = Keys.load(this); config?.let { pairedName = Protocol.decode(it.getString("invitationJws")).getString("windowsName"); fingerprint = if (it.optBoolean("paired")) "" else it.optString("fingerprint"); status = if (it.optBoolean("paired")) "Paired with $pairedName. Waiting for a secure request." else "Compare the pairing code and confirm on Windows." } }
         catch (_: Exception) { status = "Protected configuration cannot be opened. Reset local pairing and pair again." }
@@ -81,13 +84,14 @@ class MainActivity : FragmentActivity() {
             UnlockTheme {
                 UnlockDashboard(pairedName, config?.optBoolean("paired") == true, status, fingerprint,
                     vaultRequest, request, working, ::approveVault, ::denyVault, ::approve, ::deny,
-                    canPair = config == null, scanPairing = ::scanPairing,
+                    updatesRequest = updatesRequest, canPair = config == null, scanPairing = ::scanPairing,
                     importPairing = { picker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
                     controls = {
                         config?.takeIf { it.optBoolean("paired") }?.let { c -> RemoteControls(c, working) { sig, label, success, cancel ->
                             authenticate(sig, label, onCancel = cancel) { approved -> success(approved); working = false }
                         } }
                     }, settings = {
+                        UpdateSettings()
                         if (config == null) {
                             Text("Connect your laptop", style = MaterialTheme.typography.titleLarge)
                             Text("On Windows, choose Pair phone, then scan the code shown there.")
@@ -154,6 +158,7 @@ class MainActivity : FragmentActivity() {
         if (preferences.getBoolean("registered", false)) pushStatus = "Phone push token registered with your relay. On OPPO, allow background activity for WINDOWS-UNLOCK if delivery is delayed."
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); notificationRequestId = intent.getStringExtra("approvalRequestId") ?: intent.getStringExtra("requestId")
+        if (intent.getBooleanExtra("showUpdates", false)) updatesRequest++
         lifecycleScope.launch { try { if (!working) poll() } catch (_: Exception) { status = "Request unavailable or expired. No approval sent." } }
     }
     private fun reviewInvitation(text: String) {
@@ -327,5 +332,5 @@ class MainActivity : FragmentActivity() {
         lifecycleScope.launch { try { withContext(Dispatchers.IO) { Relay(c, c.getString("transportToken")).call("POST", "/v1/vault-requests/${r.getString("requestId")}/responses", JSONObject().put("responseJws", token)) }; status = if (r.getString("type") == "vault-enroll") "Phone sign-in enabled. Finish setup on Windows." else "Key release delivered. Waiting for Windows to accept sign-in." }
             catch (_: Exception) { status = "Delivery failed. Use Windows PIN; retry setup if enrollment was interrupted." } finally { working = false } }
     }
-    private fun reset() { ApprovalOverlay.setEnabled(this, false); overlayEnabled = false; config?.let { c -> Keys.delete(c.getString("approvalAlias")); Keys.delete(c.getString("identityAlias")); c.optJSONObject("vaults")?.keys()?.asSequence()?.toList()?.forEach { Keys.delete(Vault.alias(it)) } }; Keys.clear(this); getSharedPreferences("push-health", MODE_PRIVATE).edit().clear().apply(); config = null; request = null; vaultRequest = null; fingerprint = ""; pairedName = ""; status = "Local pairing removed. Also select Unpair on Windows before pairing again." }
+    private fun reset() { AudioStreamService.stop(this); ApprovalOverlay.setEnabled(this, false); overlayEnabled = false; config?.let { c -> Keys.delete(c.getString("approvalAlias")); Keys.delete(c.getString("identityAlias")); c.optJSONObject("vaults")?.keys()?.asSequence()?.toList()?.forEach { Keys.delete(Vault.alias(it)) } }; Keys.clear(this); getSharedPreferences("push-health", MODE_PRIVATE).edit().clear().apply(); config = null; request = null; vaultRequest = null; fingerprint = ""; pairedName = ""; status = "Local pairing removed. Also select Unpair on Windows before pairing again." }
 }

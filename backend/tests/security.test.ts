@@ -192,6 +192,10 @@ test('camera relay validates encrypted frames, recipient, counter and revocation
   assert.equal((await f.call('POST',url,f.wt,{...frame,wrappedKey:randomBytes(256).toString('base64url')})).statusCode,400);
   assert.equal((await f.call('POST',url,f.wt,frame)).statusCode,200);assert.equal((await f.call('POST',url,f.wt,frame)).statusCode,409);
   assert.deepEqual((await f.call('GET',url,f.at)).json(),frame);
+  assert.equal((await f.call('POST',url,f.wt,{...frame,sequence:600})).statusCode,200);
+  assert.equal((await f.call('POST',url,f.wt,{...frame,sequence:601})).statusCode,400);
+  assert.deepEqual((await f.call('GET',`${url}?after=600`,f.at)).json(),{});
+  assert.equal((await f.call('GET',`${url}?after=invalid`,f.at)).statusCode,400);
   assert.equal((await f.call('GET',url,f.wt)).statusCode,401);
   await f.call('DELETE',`/v1/device-pairings/${f.pair}`,f.wt);
   assert.equal((await f.call('GET',url,f.at)).statusCode,401);
@@ -200,6 +204,37 @@ test('camera key rejects private RSA material and invalid recipient',async t=>{
   const f=await fixture(t),r=await remote(f);await r.send();
   for(const viewerJwk of [{kty:'RSA',n:'AA',e:'AQAB'},{kty:'RSA',n:'AA',e:'AQAB',d:'secret'},null])
     assert.equal((await f.call('POST','/v1/remote/commands',f.at,{commandJws:await r.command('camera-start',{viewerJwk})})).statusCode,400);
+});
+
+test('LAN media signaling binds keys, direction, private endpoints, stop and revocation',async t=>{
+  const f=await fixture(t);const rsa=await generateKeyPair('RSA-OAEP-256',{modulusLength:2048,extractable:true});const full=await exportJWK(rsa.publicKey);const viewerJwk={kty:full.kty,n:full.n,e:full.e};
+  for(const action of ['camera-start','audio-speaker-start','audio-microphone-start']){
+    const r=await remote(f,[action,'media-stop']);assert.equal((await r.send()).statusCode,200);
+    assert.equal((await f.call('POST','/v1/remote/commands',f.at,{commandJws:await r.command(action,{},f.identity)})).statusCode,400);
+    assert.equal((await f.call('POST','/v1/remote/commands',f.at,{commandJws:await r.command(action)})).statusCode,400);
+    const commandJws=await r.command(action,{viewerJwk});const command=(await f.call('POST','/v1/remote/commands',f.at,{commandJws})).json();assert.ok(command.commandId);
+    const id=command.commandId,url=`/v1/media/${id}`,wrappedKey=randomBytes(256).toString('base64url');
+    const descriptor=message('media-descriptor',{mediaId:id,nonce:transport(),commandHash:hash(commandJws),windowsDeviceId:f.wid,androidDeviceId:f.aid,pairingId:f.pair,action,keyHash:hash(wrappedKey),issuedAt:now(),expiresAt:now()+(action==='camera-start'?59:599),transport:{protocol:'udp-aesgcm-v1',addresses:['192.168.1.3'],port:50123,sampleRate:action==='audio-speaker-start'?48000:16000,channels:action==='audio-speaker-start'?2:1,packetMs:20,maxFps:15}});
+    const body={descriptorJws:await sign(f.w,descriptor),wrappedKey};
+    assert.equal((await f.call('POST',url,f.at,body)).statusCode,401);
+    assert.equal((await f.call('POST',url,f.wt,{...body,descriptorJws:await sign(f.identity,descriptor)})).statusCode,400);
+    for(const override of [{commandHash:'0'.repeat(64)},{pairingId:randomUUID()},{action:'lock'},{expiresAt:now()+1000},{transport:{...descriptor.transport,addresses:['8.8.8.8']}},{transport:{...descriptor.transport,addresses:['127.0.0.1']}},{transport:{...descriptor.transport,addresses:['192.168.1.999']}},{transport:{...descriptor.transport,sampleRate:44100}}])
+      assert.equal((await f.call('POST',url,f.wt,{...body,descriptorJws:await sign(f.w,{...descriptor,...override})})).statusCode,400);
+    assert.equal((await f.call('POST',url,f.wt,{...body,wrappedKey:randomBytes(256).toString('base64url')})).statusCode,400);
+    assert.equal((await f.call('POST',url,f.wt,body)).statusCode,200);assert.equal((await f.call('POST',url,f.wt,body)).statusCode,200);
+    assert.deepEqual((await f.call('GET',url,f.at)).json(),{}); // No delivery before laptop acceptance.
+    const resultJws=await sign(f.w,message('remote-result',{commandId:id,commandHash:hash(commandJws),result:'accepted',timestamp:now()}));
+    assert.equal((await f.call('POST',`/v1/remote/commands/${id}/result`,f.wt,{resultJws})).statusCode,200);
+    assert.deepEqual((await f.call('GET',url,f.at)).json(),body);
+    assert.equal((await f.call('GET',url,f.wt)).statusCode,401);
+    assert.equal((await f.call('GET',`/v1/remote/commands/pending?mediaId=${id}`,f.wt)).json().mediaStopped,false);
+    assert.equal((await f.call('POST',`${url}/stop`,f.wt,{})).statusCode,401);
+    assert.equal((await f.call('POST',`${url}/stop`,f.at,{})).statusCode,200);assert.equal((await f.call('POST',`${url}/stop`,f.at,{})).statusCode,200);
+    assert.equal((await f.call('GET',`/v1/remote/commands/pending?mediaId=${id}`,f.wt)).json().mediaStopped,true);
+    assert.equal((await f.call('GET',url,f.at)).statusCode,410);
+  }
+  await f.call('DELETE',`/v1/device-pairings/${f.pair}`,f.wt);
+  assert.equal((await f.call('GET',`/v1/media/${randomUUID()}`,f.at)).statusCode,401);
 });
 test('FCM registration requires identity-key proof; push failure preserves committed request',async t=>{
   let invoked=0;const f=await fixture(t,{async send(_token,_id,_expiry,appHandled){invoked++;assert.equal(appHandled,true);throw new Error('simulated FCM unavailable');}});

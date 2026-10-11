@@ -1,4 +1,6 @@
-# WINDOWS-UNLOCK for Windows 11
+# WINDOWS-UNLOCK
+
+Version 0.7 adds encrypted Wi-Fi phone audio → laptop speakers, laptop microphone → phone, faster camera streaming, and verified Android update downloads. See [media setup and limits](docs/media-update-0.7.md). for Windows 11
 
 Windows companion and relay **0.6.2** repair repeated unpairing and stale pairing
 UI. See [root-cause diagnosis and verification](docs/pairing-diagnosis-0.6.2.md).
@@ -82,7 +84,7 @@ See [Windows sign-in status and remaining requirements](docs/windows-sign-in-sta
 
 Version 0.2 adds Firebase background popup handling (Firebase setup required),
 opt-in signed phone controls for lock/sleep/shutdown/restart, and an encrypted live
-webcam preview (Android 15+, 320x240 up to 2 fps, 60-second sessions). Start with
+webcam preview (Android 15+, Wi-Fi up to 640x480 / 15 fps; relay fallback up to 5 fps, 60-second sessions). Start with
 [hosting and remote controls](docs/hosting.md). Vercel and a TLS server/VM recipe are
 provided. This development installation has a hosted relay and Firebase configuration;
 new installations must supply their own protected server credentials and Android

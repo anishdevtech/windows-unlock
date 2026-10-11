@@ -152,7 +152,7 @@ and shuts down the media source independently of relay polling/network stalls.
 Windows generates random 32-byte AES key. RSA-OAEP with SHA256 and MGF1-SHA256 wraps
 the key. Frames use AES-256-GCM, random 12-byte IV, 16-byte tag appended to ciphertext,
 AAD UTF8(commandId + ':' + decimal sequence). Sequence starts at 1, increases and
-never exceeds 120 per 60s session. Frame fields: sequence, iv, ciphertext, wrappedKey, envelopeJws;
+never exceeds 600 per 60s session (0.7 clients; older viewers require updating). Frame fields: sequence, iv, ciphertext, wrappedKey, envelopeJws;
 all binary values canonical base64url. Max JPEG plaintext 45000 bytes, output 320x240.
 Android verifies GCM before image parsing and refuses duplicate sequence numbers.
 Before unwrapping the AES key, Android verifies envelopeJws against the pinned
@@ -181,3 +181,6 @@ in the future are rejected. The server records entries idempotently by ID and
 returns metadata only to the Android device in the active pairing. No free-text
 logs, credentials, keys or camera images are accepted. These diagnostics are
 informational; they never constitute an approval or authorize Windows sign-in.
+
+
+The 0.7 direct audio/video session protocol, signed descriptor fields and bounded UDP transport are documented in [media transport](media-spec.md).

@@ -20,7 +20,7 @@ import javax.crypto.spec.SecretKeySpec
 import java.util.Base64
 import org.json.JSONObject
 
-class CameraSession(val id: String, private val config: JSONObject) : AutoCloseable {
+class CameraSession(val id: String, private val config: JSONObject, durationMs: Long = 60000) : AutoCloseable {
     private val alias = "phoneunlock-camera-$id"
     private var sessionKey: ByteArray? = null
     private var expectedCommandHash = ""
@@ -28,7 +28,7 @@ class CameraSession(val id: String, private val config: JSONObject) : AutoClosea
     fun bind(commandHash: String) { check(expectedCommandHash.isEmpty()); expectedCommandHash = commandHash }
     private var sequence = 0L
     val lastSequence: Long get() = sequence
-    private val deadline = android.os.SystemClock.elapsedRealtime() + 60000
+    private val deadline = android.os.SystemClock.elapsedRealtime() + durationMs
     val publicKey: JSONObject
     init {
         // API 35 exposes explicit MGF1 digest authorization for Keystore OAEP keys.
@@ -51,9 +51,15 @@ class CameraSession(val id: String, private val config: JSONObject) : AutoClosea
         fun unsigned(n: BigInteger): ByteArray = n.toByteArray().let { if (it[0] == 0.toByte()) it.copyOfRange(1, it.size) else it }
         publicKey = JSONObject().put("kty", "RSA").put("n", Protocol.b64(unsigned(key.modulus))).put("e", Protocol.b64(unsigned(key.publicExponent)))
     }
+    fun media(response: JSONObject, action: String): MediaLink {
+        val descriptor = MediaDescriptor.verify(response, config, id, expectedCommandHash, action)
+        val wrapped = Base64.getUrlDecoder().decode(response.getString("wrappedKey")); require(wrapped.size == 256)
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        return MediaLink(id, descriptor, CameraCrypto.unwrap(store.getKey(alias, null) as PrivateKey, wrapped))
+    }
     fun decrypt(frame: JSONObject): ByteArray {
         check(android.os.SystemClock.elapsedRealtime() < deadline)
-        val seq = frame.getLong("sequence"); require(seq > sequence && seq <= 120)
+        val seq = frame.getLong("sequence"); require(seq > sequence && seq <= 600)
         fun bytes(name: String): ByteArray {
             val value = frame.getString(name); val bytes = Base64.getUrlDecoder().decode(value)
             require(Protocol.b64(bytes) == value); return bytes

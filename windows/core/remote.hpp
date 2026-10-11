@@ -17,7 +17,9 @@ public:
               std::function<bool()> cameraPermitted,
               std::function<bool(bool)> cameraDisclosure,
               std::function<bool()> cameraIndicatorVisible,
-              std::function<void(const char*)> trace);
+              std::function<void(const char*)> trace,
+              std::function<bool(const std::string&)> audioPermitted={},
+              std::function<bool(const std::string&,bool)> audioDisclosure={});
   ~RemoteAgent();
 };
 // Standard RSA-OAEP(SHA256/MGF1-SHA256) + AES-256-GCM camera transport.
